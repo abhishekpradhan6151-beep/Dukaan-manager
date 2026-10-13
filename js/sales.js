@@ -1,5 +1,5 @@
 /*
- * sales.js - Phase 3: sales data and business rules (no screens here).
+ * sales.js - Phase 3 & 4: sales data, business rules, and customer credit integration.
  *
  * Money is calculated in paise (whole numbers) so there are no rounding
  * surprises like 0.1 + 0.2. Results are stored in rupees with 2 decimals.
@@ -7,13 +7,16 @@
  * A sale is saved by complete(): ONE database transaction that
  *   1. refuses a bill id that was already saved (no duplicate sales),
  *   2. re-checks every product (exists, active, price unchanged, enough stock),
- *   3. takes the next invoice number,
- *   4. reduces stock exactly once and writes stock history,
- *   5. saves the sale with its line items and payments.
+ *   3. validates customer if attached or required for credit,
+ *   4. takes the next invoice number,
+ *   5. reduces stock exactly once and writes stock history,
+ *   6. creates customer ledger entry if credit is created,
+ *   7. saves the sale with its line items and payments.
  * If anything fails, nothing is saved. Success is reported only after commit.
  *
  * A sale is never edited or deleted. cancel() marks it "cancelled", puts the
- * stock back exactly once and records who/why/when in the sale's event log.
+ * stock back exactly once, reverses active credit in the customer ledger,
+ * and records who/why/when in the sale's event log.
  */
 (function () {
   "use strict";
@@ -95,19 +98,22 @@
    *   discount      { type, value }
    *   taxRate       percent (0 = off)
    *   payments      [{ method, amount }]   money received now
-   *   customerName, customerPhone, prefix
+   *   customerId, customerName, customerPhone, prefix
    * Resolves with the saved sale AFTER the transaction has committed.
    */
   function complete(input) {
     const items = mergeItems(input.items || []);
     const prefix = (input.prefix || "INV").toUpperCase();
+    const customerId = input.customerId || null;
     const customerName = (input.customerName || "").trim().slice(0, 80);
     const customerPhone = (input.customerPhone || "").trim().slice(0, 20);
     const taxRate = Number(input.taxRate) || 0;
 
-    return DB.run(["products", "stockHistory", "sales", "counters"], "readwrite", async (tx) => {
+    return DB.run(["products", "stockHistory", "sales", "counters", "customers", "customerLedger"], "readwrite", async (tx) => {
       const salesStore = tx.objectStore("sales");
       const prodStore = tx.objectStore("products");
+      const custStore = tx.objectStore("customers");
+      const ledgerStore = tx.objectStore("customerLedger");
 
       // 1. Same bill id already saved? Then do nothing and say so.
       const existing = await DB.req(salesStore.get(input.id));
@@ -116,7 +122,14 @@
       }
       if (!items.length) throw fail("The bill has no items.");
 
-      // 2. Check every product against the database (not the screen).
+      // 2. Check customer if attached or required.
+      let attachedCust = null;
+      if (customerId) {
+        attachedCust = await DB.req(custStore.get(customerId));
+        if (!attachedCust) throw fail("The selected customer was not found in database.");
+      }
+
+      // 3. Check every product against the database (not the screen).
       const checked = [];
       for (const it of items) {
         const p = await DB.req(prodStore.get(it.productId));
@@ -134,7 +147,7 @@
         checked.push({ p: p, qty: it.qty });
       }
 
-      // 3. Totals, from database prices and cost snapshots.
+      // 4. Totals, from database prices and cost snapshots.
       const lines = checked.map((c) => ({
         productId: c.p.id, name: c.p.name, sku: c.p.sku, unit: c.p.unit, qty: c.qty,
         unitPrice: c.p.price, costSnapshot: c.p.cost, costMissing: !(c.p.cost > 0),
@@ -144,29 +157,37 @@
       if (t.discountTooHigh) throw fail("The discount is more than the subtotal.");
       if (t.totalP <= 0) throw fail("The bill total must be more than zero.");
 
-      // 4. Payments received now. Whatever is not paid stays as credit (udhaar).
+      // 5. Payments received now. Whatever is not paid stays as credit (udhaar).
       const at = DB.now();
       const payments = [];
       let paidP = 0;
       for (const pay of (input.payments || [])) {
         const amt = Number(pay.amount);
         if (!U.METHODS[pay.method]) throw fail("Unknown payment method.");
-        if (!Number.isFinite(amt) || amt <= 0 || Math.abs(amt * 100 - Math.round(amt * 100)) > 1e-6) throw fail("Each payment must be an amount above 0 with at most 2 decimals.");
+        if (!Number.isFinite(amt) || amt <= 0 || Math.abs(amt * 100 - Math.round(amt * 100)) > 1e-6) {
+          throw fail("Each payment must be an amount above 0 with at most 2 decimals.");
+        }
         paidP += toPaise(amt);
         payments.push({ id: DB.uid(), method: pay.method, amount: toPaise(amt) / 100, at: at });
       }
       if (paidP > t.totalP) throw fail("Payments are more than the bill total.");
       const outstandingP = t.totalP - paidP;
-      if (outstandingP > 0 && !customerName) throw fail("Enter the customer’s name when part or all of the bill is on credit (udhaar).");
 
-      // 5. Next invoice number (same transaction, so numbers never repeat).
+      // When a sale creates credit, a customer MUST be registered.
+      if (outstandingP > 0) {
+        if (!customerId) {
+          throw fail("Please select or add a registered customer when part or all of the bill is on credit (udhaar).");
+        }
+      }
+
+      // 6. Next invoice number (same transaction, so numbers never repeat).
       const counters = tx.objectStore("counters");
       const counter = (await DB.req(counters.get("invoice"))) || { name: "invoice", value: 0 };
       counter.value += 1;
       counters.put(counter);
       const invoiceNo = prefix + "-" + String(counter.value).padStart(6, "0");
 
-      // 6. Reduce stock exactly once and write the history.
+      // 7. Reduce stock exactly once and write the history.
       for (const c of checked) {
         const before = c.p.stock;
         const after = U.round(before - c.qty, 3);
@@ -176,8 +197,36 @@
         tx.objectStore("stockHistory").add(stockEntry(c.p, before, after, "sale", "Sale " + invoiceNo, at));
       }
 
-      // 7. Save the sale itself.
+      // 8. If credit sale, add customer ledger entry
+      if (outstandingP > 0 && customerId) {
+        const ledgerEntry = {
+          id: DB.uid(),
+          customerId: customerId,
+          type: "credit_sale",
+          saleId: input.id,
+          invoiceNo: invoiceNo,
+          repaymentId: null,
+          debit: outstandingP / 100,
+          credit: 0,
+          amount: outstandingP / 100,
+          paymentMethod: null,
+          createdAt: at,
+          note: "Credit sale " + invoiceNo,
+          referenceId: null
+        };
+        ledgerStore.add(ledgerEntry);
+
+        if (attachedCust) {
+          attachedCust.updatedAt = at;
+          custStore.put(attachedCust);
+        }
+      }
+
+      // 9. Save the sale itself.
       const discountValue = input.discount && input.discount.value > 0 ? input.discount.value : 0;
+      const finalCustomerName = attachedCust ? attachedCust.name : (customerName || "");
+      const finalCustomerPhone = attachedCust ? (attachedCust.phone || "") : (customerPhone || "");
+
       const sale = {
         id: input.id, invoiceNo: invoiceNo, createdAt: at, dateKey: U.dateKey(at), status: "completed",
         items: lines,
@@ -185,8 +234,8 @@
         discount: t.discount, discountType: discountValue ? input.discount.type : "amount", discountValue: discountValue,
         taxRate: taxRate, tax: t.tax, total: t.total, cogs: t.cogs,
         payments: payments, amountPaid: paidP / 100, outstanding: outstandingP / 100,
-        customerId: null, // customer ledger arrives in Phase 4
-        customerName: customerName, customerPhone: customerPhone,
+        customerId: customerId,
+        customerName: finalCustomerName, customerPhone: finalCustomerPhone,
         cancellation: null,
         events: [{ type: "created", at: at }]
       };
@@ -197,20 +246,24 @@
 
   /*
    * cancel(saleId, reason)
-   * Marks a completed sale as cancelled, returns its stock and logs the event.
-   * The status check happens inside the transaction, so a second cancel
-   * (double click, two tabs) is refused and stock is never returned twice.
+   * Marks a completed sale as cancelled, returns its stock, reverses active credit in the
+   * customer ledger exactly once, and logs the event.
+   * Status check and reversals happen inside ONE transaction.
    */
   function cancel(saleId, reason) {
     reason = String(reason || "").trim();
     if (reason.length < 3) return Promise.reject(fail("Enter a reason (at least 3 characters)."));
-    return DB.run(["products", "stockHistory", "sales"], "readwrite", async (tx) => {
+
+    return DB.run(["products", "stockHistory", "sales", "customerLedger", "repaymentAllocations"], "readwrite", async (tx) => {
       const salesStore = tx.objectStore("sales");
       const sale = await DB.req(salesStore.get(saleId));
       if (!sale) throw fail("Sale not found.");
       if (sale.status !== "completed") throw fail("This sale is already cancelled. Stock was not changed again.", "ALREADY_CANCELLED");
+
       const at = DB.now();
       const prodStore = tx.objectStore("products");
+
+      // 1. Put back stock
       for (const it of sale.items) {
         const p = await DB.req(prodStore.get(it.productId));
         if (!p) throw fail("A product from this sale no longer exists, so stock cannot be returned.");
@@ -221,10 +274,65 @@
         prodStore.put(p);
         tx.objectStore("stockHistory").add(stockEntry(p, before, after, "sale-cancel", "Sale cancelled: " + sale.invoiceNo, at));
       }
+
+      // 2. Customer credit and repayment reversals
+      let totalRepaidP = 0;
+      const allocStore = tx.objectStore("repaymentAllocations");
+      let allocations = [];
+      try {
+        const saleIndex = allocStore.index("saleId");
+        allocations = await DB.req(saleIndex.getAll(sale.id));
+      } catch (_) {
+        allocations = [];
+      }
+
+      for (const alloc of allocations) {
+        if (alloc.status !== "reversed") {
+          totalRepaidP += Math.round(alloc.amount * 100);
+          alloc.status = "reversed";
+          alloc.reversedAt = at;
+          allocStore.put(alloc);
+        }
+      }
+
+      const initialOutstandingP = Math.round((sale.outstanding || 0) * 100);
+      const remainingUnpaidP = Math.max(0, initialOutstandingP - totalRepaidP);
+
+      // If there was remaining unpaid credit on this bill, reverse it in the customer ledger
+      if (sale.customerId && remainingUnpaidP > 0) {
+        const ledgerStore = tx.objectStore("customerLedger");
+        const revEntry = {
+          id: DB.uid(),
+          customerId: sale.customerId,
+          type: "cancellation",
+          saleId: sale.id,
+          invoiceNo: sale.invoiceNo,
+          repaymentId: null,
+          debit: 0,
+          credit: remainingUnpaidP / 100,
+          amount: remainingUnpaidP / 100,
+          paymentMethod: null,
+          createdAt: at,
+          note: "Credit reversed for cancelled sale " + sale.invoiceNo,
+          referenceId: sale.id
+        };
+        ledgerStore.add(revEntry);
+      }
+
+      // Total money collected that shopkeeper must refund
+      const totalCollected = (Math.round((sale.amountPaid || 0) * 100) + totalRepaidP) / 100;
+
       sale.status = "cancelled";
-      sale.cancellation = { at: at, reason: reason, refundDue: sale.amountPaid };
+      sale.cancellation = {
+        at: at,
+        reason: reason,
+        refundDue: totalCollected,
+        salePaidRefund: sale.amountPaid || 0,
+        repaymentsRefund: totalRepaidP / 100
+      };
       sale.events.push({ type: "cancelled", at: at, reason: reason });
       salesStore.put(sale);
+
       return sale;
     });
   }
@@ -256,10 +364,8 @@
   function dashboard() {
     const today = U.todayKey();
     const t = { sales: 0, cash: 0, upi: 0, other: 0, credit: 0, gross: 0, costMissing: false, count: 0 };
-    let creditOutstanding = 0;
     cache.forEach((s) => {
       if (s.status !== "completed") return;
-      creditOutstanding += s.outstanding;
       if (s.dateKey !== today) return;
       t.count += 1;
       t.sales += s.total;
@@ -273,7 +379,20 @@
       });
     });
     ["sales", "cash", "upi", "other", "credit", "gross"].forEach((k) => { t[k] = U.round(t[k], 2); });
-    return { today: t, creditOutstanding: U.round(creditOutstanding, 2), recent: cache.slice(0, 6) };
+
+    // Customer credit due is derived live from customer ledger / active credit
+    let creditOutstanding = 0;
+    if (window.DukaanCustomers && typeof window.DukaanCustomers.totalCreditOutstanding === "function") {
+      creditOutstanding = window.DukaanCustomers.totalCreditOutstanding();
+    } else {
+      // Fallback if customers module not ready yet: completed sales outstanding
+      cache.forEach((s) => {
+        if (s.status === "completed") creditOutstanding += (s.outstanding || 0);
+      });
+      creditOutstanding = U.round(creditOutstanding, 2);
+    }
+
+    return { today: t, creditOutstanding: creditOutstanding, recent: cache.slice(0, 6) };
   }
 
   function customerNames() {

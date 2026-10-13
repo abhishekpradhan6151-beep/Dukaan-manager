@@ -1,12 +1,13 @@
-# Dukaan Manager (Phase 3: Billing, Sales History, Receipts)
+# Dukaan Manager (Phase 4: Customer Management & Udhaar Ledger)
 
-Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and JavaScript, no build step.
+Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and vanilla JavaScript, no build step.
 
 ## Status
 - **Phase 1** done: responsive layout, navigation, dashboard.
 - **Phase 2** done: products and inventory (IndexedDB).
 - **Phase 3** done: billing, sales history, receipt and invoice printing, shop details for receipts.
-- Everything shown is real data saved on this device. There is no sample data any more.
+- **Phase 4** done: customer management, udhaar ledger, multi-bill repayments, running balances, credit cancellation reversal, and repayment receipts.
+- Everything shown is real data saved on this device. There is no sample data.
 
 ## Run it
 Serve the folder (browser storage is most reliable on http://localhost):
@@ -16,57 +17,78 @@ Serve the folder (browser storage is most reliable on http://localhost):
 
 then open http://localhost:8000. Opening `index.html` directly may work, but some browsers restrict storage for `file://` pages.
 
-## Using Phase 3
-1. **Settings > Shop details**: enter shop name, address, phone, invoice prefix and receipt footer (printed on bills).
-2. **Products**: add products with stock (Phase 2).
-3. **New Sale**: search (or scan a barcode and press Enter), tap Add, change quantities, optionally add a discount (amount or %) and a tax % for that bill, choose how it was paid, then **Complete sale**.
-   - Payment starts as "Cash, paid in full". Use UPI, "All on credit (udhaar)", or "+ Part / split payment" for several methods or part payment.
-   - Whatever is not paid now becomes credit (udhaar). Credit needs a customer name.
-   - UPI, card and bank are records only. The app does not process payments.
-4. **Sales History**: search by invoice or customer, filter by date, payment, status. Open a sale to see the receipt, reprint it, or cancel it.
-5. **Print**: "Print receipt" (72 mm slip) or "Print A4 invoice" opens your browser's print dialog.
+## Using Phase 4
+1. **Customers & Udhaar**:
+   - Access via the sidebar navigation or bottom navigation on mobile ("Udhaar"), or dashboard quick actions ("+ Add Customer" / "Customers & Udhaar").
+   - **Add Customer**: Name (required), phone number (optional), address, and notes. Duplicate phone numbers trigger a warning while allowing you to proceed if intended.
+   - **Customer Profile & Ledger**: Tap on any customer to see their total outstanding balance, outstanding bills count, contact details, outstanding invoices list, and complete chronological udhaar ledger with running balances.
+   - **Filter Ledger**: Filter ledger entries by date range (`From`, `To`) and transaction type (Credit sales, Repayments, Cancellations).
+   - **Archive / Restore**: Archive customers without losing their ledger entries or sales history.
+2. **Billing with Customers**:
+   - In **New Sale**, select an existing customer or search by name / phone number.
+   - Click **+ New Customer** right in the billing panel to add a customer immediately without clearing or losing items in your cart.
+   - The selected customer's live credit balance is displayed right on the billing screen.
+   - Fully paid sales can optionally be attached to a customer.
+   - Credit sales (where payment received is less than total) **require** a registered customer.
+3. **Recording Repayments**:
+   - Tap **Record Repayment** from the customer profile, customer card, or outstanding bills list.
+   - Enter the repayment amount received (cash, UPI, card, or bank transfer).
+   - Click **Pay full balance** or **Auto-allocate (oldest first)** to automatically distribute repayment across unpaid bills, or customize allocations per bill.
+   - Repayments cannot exceed the customer's total outstanding balance (advance payments are prohibited).
+   - Review confirmation details before committing the repayment to database.
+   - Print a compact slip (72 mm) or A4 invoice payment confirmation receipt after recording.
+4. **Cancellation with Credit Reversal**:
+   - When a credit sale is cancelled from Sales History, stock is restored, active unpaid credit is reversed from the customer's ledger, and any repayments made towards that bill are tracked in the refund due amount.
 
 ## Rules the app enforces
-- A sale is saved in ONE database transaction: it re-checks every product, stock and price, takes the next invoice number, reduces stock once, and saves the sale. If anything fails, nothing is saved. "Sale saved" is shown only after the commit.
-- Overselling is blocked (screen and database). Archived products cannot be sold. Whole-number units refuse decimals.
-- Every bill has a unique id: repeated clicks or a resent bill cannot save twice. Invoice numbers never repeat.
-- Money is calculated in paise, so there are no rounding drifts (3 x 0.10 = 0.30).
-- Each line stores the product's cost at the time of sale (cost snapshot). Later cost changes do not alter old profit.
-- Sales are never edited or deleted. **Cancel** marks the whole sale cancelled, returns stock exactly once (a second cancel is refused), and records reason and time. Money already received must be refunded by you; the app only records the cancellation.
-- Dashboard: Total sales (revenue), cash, UPI, card/bank (recorded) and credit are shown separately. Gross profit = sales before tax, minus discount, minus cost of goods (estimate; a warning shows when an item has no cost). Cancelled sales are excluded.
+- **Auditable Ledger**: Customer balances are calculated dynamically from immutable ledger entries, never from a manually editable balance field.
+- **Single Atomic Transactions**: All related financial updates (sale + stock + customer ledger, or repayment + allocations + customer ledger) commit together in ONE transaction. Success is displayed only after the transaction commits.
+- **Financial Integrity**:
+  - Repayments never increase sales revenue or alter inventory stock.
+  - Credit sales increase the customer's balance by the unpaid portion only.
+  - Cancelled sales reverse credit exactly once and cannot be cancelled twice.
+  - Duplicate repayment submissions and over-allocations are strictly prevented.
+- **Paise Precision**: All money calculations use paise (integers) to prevent floating-point rounding errors.
 
 ## Files
-- `index.html` structure, pages, dialogs
-- `style.css` design system, layouts, receipt and print styles
+- `index.html` structure, views, dialogs (products, customers, repayments, sales)
+- `style.css` design system, responsive tables, cards, print layouts
 - `script.js` navigation and live dashboard
-- `js/db.js` IndexedDB helper (database version 2; upgrades Phase 2 data without loss)
+- `js/db.js` IndexedDB helper (database version 3; upgrades Phase 2 and 3 data without loss)
 - `js/util.js` shared helpers (formatting, parsing, toast)
 - `js/settings.js` shop details
 - `js/products.js` products and inventory (Phase 2)
-- `js/sales.js` sale rules: totals, complete, cancel, dashboard numbers
-- `js/billing.js` New Sale screen
+- `js/sales.js` sale rules: totals, complete, cancel, customer credit integration
+- `js/customers.js` customer management, udhaar ledger, repayment recording (Phase 4)
+- `js/billing.js` New Sale screen with customer selection and quick-add
 - `js/history.js` Sales History, sale details, cancellation
-- `js/receipt.js` receipt and A4 invoice building and printing
+- `js/receipt.js` sales and repayment receipt / invoice building and printing
+- `test_phase4.js` automated test suite covering all 18 Phase 4 verification scenarios
 
-## Data stored (IndexedDB database `dukaan-manager`, version 2)
-`products`, `stockHistory`, `sales` (with line items, payments, event log), `counters` (invoice number), `settings`.
+## Data stored (IndexedDB database `dukaan-manager`, version 3)
+- `products`: product catalog, stock, pricing, and cost snapshots
+- `stockHistory`: audit log of stock movements (additions, sales, cancellations)
+- `sales`: completed and cancelled sales with line items, payments, and customer IDs
+- `counters`: auto-incrementing counters for invoice numbers and repayment receipts
+- `settings`: shop profile details
+- `customers`: customer contact details, timestamps, and active/archived status
+- `customerLedger`: auditable ledger entries (credit sales, repayments, cancellations)
+- `repayments`: repayment transaction records with method and notes
+- `repaymentAllocations`: allocation breakdown of repayments across specific invoices
 
-## Printing notes
-- Printing uses the browser print dialog; the app cannot talk to a thermal printer directly. Install the printer on the device and choose it and its paper size in the dialog.
-- The compact slip is 72 mm wide. Margins, paper cutting and fonts depend on the printer driver.
-- The A4 invoice is a plain bill. It is **not** a statutory GST tax invoice.
+## Database Migration (v2 to v3)
+Upgrades existing Phase 3 databases seamlessly on load:
+- Preserves all existing `products`, `stockHistory`, `sales`, `counters`, and `settings` stores without data loss.
+- Adds new object stores: `customers`, `customerLedger`, `repayments`, `repaymentAllocations`.
+- Adds `customerId` index on `sales` store.
 
 ## Not implemented yet
-- Customer ledger, linking sales to customer records, repayments (Phase 4). Credit sales store the customer name only. "Customer credit due" is the unpaid amount on completed sales and does not yet reduce when a customer pays.
-- Expenses and reports (Phase 5). Dashboard shows expenses as "–".
-- Partial returns and refund records. Only whole-sale cancellation exists.
-- Backup/restore and data export other than product CSV (Phase 6). Until then, data exists only in this browser.
-- Default tax setting (tax is typed per bill), login or user permissions (anyone using the device can cancel a sale), service worker / installable app and offline start (Phase 7), cloud sync (Phase 9).
-- A bill being built is kept when you switch pages, but not if you reload (the browser warns first).
+- Expenses and profit & loss reports (Phase 5).
+- Full database backup & restore export/import (Phase 6).
+- Offline service worker caching / PWA installability (Phase 7).
+- Cloud synchronization and multi-device support (Phase 9).
 
-## Known limits
-- Data lives only in this browser on this device. Clearing site data or losing the device loses it.
-- Data is not encrypted and is visible to anyone who uses the device and browser.
-- Two tabs or devices have separate data. Use one tab.
-- Private/incognito windows may refuse or erase storage; the app shows a message if storage fails.
-- The offline indicator reflects browser connectivity only.
+## Verification & Testing
+Run the offline automated test suite directly:
+
+    node test_phase4.js

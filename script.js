@@ -1,8 +1,9 @@
 /*
  * Dukaan Manager - navigation and dashboard.
  * Products live in js/products.js; sales, billing, history and receipts live in
- * js/sales.js, js/billing.js, js/history.js and js/receipt.js. The dashboard
- * below is calculated from the saved sales and products (no sample numbers).
+ * js/sales.js, js/billing.js, js/history.js and js/receipt.js; customers and
+ * udhaar ledger live in js/customers.js.
+ * The dashboard below is calculated live from the saved data (no sample numbers).
  */
 (function () {
   "use strict";
@@ -26,11 +27,8 @@
     { id: "customers", label: "Udhaar" }
   ];
 
-  
-
   const $ = (id) => document.getElementById(id);
   const el = U.el;
-  // whole rupees stay short (₹100); amounts with paise always show two decimals (₹423.90)
   const fmt = (n) => (Number.isInteger(n) ? U.money(n) : U.money2(n));
 
   /* ---------- Navigation ---------- */
@@ -66,7 +64,10 @@
 
   function go(page) {
     if (!PAGES.some((p) => p.id === page)) page = "dashboard";
-    PAGES.forEach((p) => { $("view-" + p.id).hidden = p.id !== page; });
+    PAGES.forEach((p) => {
+      const v = $("view-" + p.id);
+      if (v) v.hidden = p.id !== page;
+    });
     document.querySelectorAll(".nav-link[data-page]").forEach((b) => {
       if (b.dataset.page === page) b.setAttribute("aria-current", "page");
       else b.removeAttribute("aria-current");
@@ -85,7 +86,7 @@
     $("menuBtn").setAttribute("aria-expanded", String(open));
   }
 
-  /* ---------- Dashboard (live, from saved sales and products) ---------- */
+  /* ---------- Dashboard (live, from saved sales, products, and customer ledger) ---------- */
   function card(label, value, hint, accent) {
     const c = el("div", "card" + (accent ? " accent-" + accent : ""));
     c.append(el("div", "card-label", label), el("div", "card-value", value), el("div", "card-hint", hint));
@@ -107,8 +108,9 @@
     const s = salesData();
     if (s.state !== "ready") {
       const failed = s.state === "failed";
-      ["Total sales", "Cash received", "UPI recorded", "Card / bank recorded", "Credit sales", "Expenses", "Est. gross profit"]
-        .forEach((l) => wrap.append(card(l, failed ? "–" : "…", failed ? "Storage unavailable" : "Loading", failed ? "warn" : "")));
+      ["Total sales", "Cash received", "UPI recorded", "Card / bank recorded", "Credit sales", "Expenses", "Est. gross profit"].forEach((l) =>
+        wrap.append(card(l, failed ? "–" : "…", failed ? "Storage unavailable" : "Loading", failed ? "warn" : ""))
+      );
       return;
     }
     const t = s.d.today;
@@ -123,7 +125,6 @@
     );
   }
 
-  // Product counts and credit due are live. Repayments (which reduce credit) arrive in Phase 4.
   function renderStockCards() {
     const wrap = $("cardsStock");
     wrap.replaceChildren();
@@ -141,11 +142,19 @@
     } else {
       wrap.append(card("Total products", "…", "Loading"), card("Low stock", "…", "Loading", "warn"));
     }
-    const s = salesData();
-    if (s.state === "ready") {
-      wrap.append(card("Customer credit due", fmt(s.d.creditOutstanding), "Unpaid on completed sales. Repayments arrive in Phase 4.", "gold"));
+
+    // Customer credit due derived from live customer ledger
+    let creditTotal = 0;
+    if (window.DukaanCustomers && typeof window.DukaanCustomers.totalCreditOutstanding === "function") {
+      creditTotal = window.DukaanCustomers.totalCreditOutstanding();
+      wrap.append(card("Customer credit due", fmt(creditTotal), "Live: total unpaid udhaar across customer ledgers", "gold"));
     } else {
-      wrap.append(card("Customer credit due", s.state === "failed" ? "–" : "…", s.state === "failed" ? "Storage unavailable" : "Loading", "gold"));
+      const s = salesData();
+      if (s.state === "ready") {
+        wrap.append(card("Customer credit due", fmt(s.d.creditOutstanding), "Live: unpaid customer credit", "gold"));
+      } else {
+        wrap.append(card("Customer credit due", s.state === "failed" ? "–" : "…", s.state === "failed" ? "Storage unavailable" : "Loading", "gold"));
+      }
     }
   }
 
@@ -161,19 +170,27 @@
     const wrap = $("recentWrap");
     wrap.replaceChildren();
     const s = salesData();
-    if (s.state === "loading") { wrap.append(el("p", "muted", "Loading…")); return; }
-    if (s.state === "failed") { wrap.append(el("p", "alert", window.DukaanSales.error() + " Recent sales are unavailable.")); return; }
+    if (s.state === "loading") {
+      wrap.append(el("p", "muted", "Loading…"));
+      return;
+    }
+    if (s.state === "failed") {
+      wrap.append(el("p", "alert", window.DukaanSales.error() + " Recent sales are unavailable."));
+      return;
+    }
     const rows = s.d.recent;
     if (!rows.length) {
       const e = el("div", "empty-state");
       e.append(el("h2", "", "No transactions yet"), el("p", "", "Completed sales will appear here."));
       const b = el("button", "btn btn-primary", "+ Make your first sale");
-      b.type = "button"; b.style.marginTop = ".8rem";
+      b.type = "button";
+      b.style.marginTop = ".8rem";
       b.addEventListener("click", () => go("sale"));
       e.append(b);
       wrap.append(e);
       return;
     }
+
     // Table (tablet/desktop)
     const tw = el("div", "table-wrap");
     const table = el("table");
@@ -193,8 +210,16 @@
       const tr = el("tr");
       const badgeTd = el("td");
       badgeTd.append(el("span", "badge" + (pay.cls ? " " + pay.cls : ""), pay.label));
-      const actTd = el("td"); actTd.append(viewButton(r));
-      tr.append(el("td", "", r.invoiceNo), el("td", "", U.dateTime(r.createdAt)), el("td", "", r.customerName || "Walk-in"), badgeTd, el("td", "num", U.money2(r.total)), actTd);
+      const actTd = el("td");
+      actTd.append(viewButton(r));
+      tr.append(
+        el("td", "", r.invoiceNo),
+        el("td", "", U.dateTime(r.createdAt)),
+        el("td", "", r.customerName || "Walk-in"),
+        badgeTd,
+        el("td", "num", U.money2(r.total)),
+        actTd
+      );
       tbody.append(tr);
 
       // Card (mobile)
@@ -203,8 +228,11 @@
       left.append(el("strong", "", r.customerName || "Walk-in"), el("div", "card-hint", r.invoiceNo + " · " + U.dateTime(r.createdAt)));
       const right = el("div");
       right.style.textAlign = "right";
-      const bw = el("div"); bw.append(el("span", "badge" + (pay.cls ? " " + pay.cls : ""), pay.label));
-      const vw = el("div"); vw.style.marginTop = ".3rem"; vw.append(viewButton(r));
+      const bw = el("div");
+      bw.append(el("span", "badge" + (pay.cls ? " " + pay.cls : ""), pay.label));
+      const vw = el("div");
+      vw.style.marginTop = ".3rem";
+      vw.append(viewButton(r));
       right.append(el("strong", "", U.money2(r.total)), bw, vw);
       item.append(left, right);
       list.append(item);
@@ -239,14 +267,21 @@
     $("menuBtn").addEventListener("click", () => toggleMenu(!$("sidebar").classList.contains("open")));
     $("scrim").addEventListener("click", () => toggleMenu(false));
     $("settingsBtn").addEventListener("click", () => go("settings"));
-    document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => {
-      go(b.dataset.go);
-      if (b.dataset.action === "add-product" && window.DukaanProducts) window.DukaanProducts.openAdd();
-    }));
-    // The dashboard follows the saved data.
+    document.querySelectorAll("[data-go]").forEach((b) =>
+      b.addEventListener("click", () => {
+        go(b.dataset.go);
+        if (b.dataset.action === "add-product" && window.DukaanProducts) window.DukaanProducts.openAdd();
+        if (b.dataset.action === "add-customer" && window.DukaanCustomers) window.DukaanCustomers.openAddDialog();
+      })
+    );
+    // The dashboard follows saved products, sales, and customers
     document.addEventListener("products-changed", renderDashboard);
     document.addEventListener("sales-changed", renderDashboard);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleMenu(false); });
+    document.addEventListener("customers-changed", renderDashboard);
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") toggleMenu(false);
+    });
     window.addEventListener("hashchange", () => go(location.hash.slice(1)));
     go(location.hash.slice(1) || "dashboard");
   });

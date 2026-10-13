@@ -303,3 +303,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .field-sm { flex: 1 1 45%; }
   .field-sm input { min-width: 0; }
 }
+
+/* ===== Phase 4: Customers & Udhaar Ledger ===== */
+.alloc-input { min-height: 36px; padding: .25rem .5rem; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+.alloc-input:focus { border-color: var(--green); outline: 2px solid var(--gold); }
+#custStatsCards { margin-bottom: 1rem; }

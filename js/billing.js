@@ -1,11 +1,10 @@
 /*
- * billing.js - Phase 3: the New Sale screen.
- * This file only reads the screen and calls DukaanSales.complete(). The
- * database checks (stock, price, duplicate bill) happen again inside that
- * transaction, so a stale screen can never oversell or double-save.
+ * billing.js - Phase 3 & 4: the New Sale screen with customer integration.
+ * This file reads the screen, manages cart state in memory, integrates customer
+ * selection, and calls DukaanSales.complete().
  *
  * The bill being built is kept in memory in `state`, so switching to another
- * page and back does not lose it. Reloading the page does (a warning is shown).
+ * page, adding a new customer, or viewing details does not lose it.
  */
 (function () {
   "use strict";
@@ -15,14 +14,18 @@
   const $ = U.$;
   const el = U.el;
 
-  // saleId is created when a bill is started. Saving the same id twice is refused by the database.
-  // A new bill starts with one "cash, paid in full" row (it follows the bill total). Change it, or tap "All on credit".
   const defaultPayments = () => [{ method: "cash", amount: "", auto: true }];
-  const state = { cart: [], payments: defaultPayments(), saleId: DB.uid(), busy: false };
+  const state = {
+    cart: [],
+    payments: defaultPayments(),
+    saleId: DB.uid(),
+    customerId: null,
+    busy: false
+  };
 
   const products = () => (window.DukaanProducts ? window.DukaanProducts.list() : []);
   const byId = (id) => products().find((p) => p.id === id);
-  const isDecimal = (unit) => window.DukaanProducts.isDecimalUnit(unit);
+  const isDecimal = (unit) => (window.DukaanProducts ? window.DukaanProducts.isDecimalUnit(unit) : false);
   const settings = () => (window.DukaanSettings ? window.DukaanSettings.get() : { prefix: "INV" });
 
   /* ---------- reading the screen ---------- */
@@ -47,24 +50,30 @@
     let dValue = 0, dErr = "";
     if (rawD !== "") {
       dValue = type === "percent" ? U.parsePercent(rawD) : U.parseMoney(rawD);
-      if (Number.isNaN(dValue)) { dErr = type === "percent" ? "Discount % must be between 0 and 100." : "Enter the discount as an amount such as 50 or 12.50."; dValue = 0; }
+      if (Number.isNaN(dValue)) {
+        dErr = type === "percent" ? "Discount % must be between 0 and 100." : "Enter the discount as an amount such as 50 or 12.50.";
+        dValue = 0;
+      }
     }
     const rawT = $("sTax").value.trim();
     let tax = 0, tErr = "";
     if (rawT !== "") {
       tax = U.parsePercent(rawT);
-      if (Number.isNaN(tax)) { tErr = "Tax % must be between 0 and 100."; tax = 0; }
+      if (Number.isNaN(tax)) {
+        tErr = "Tax % must be between 0 and 100.";
+        tax = 0;
+      }
     }
     return { discount: { type: type, value: dValue }, tax: tax, dErr: dErr, tErr: tErr };
   }
 
   function currentTotals(lines, extras) {
-    const usable = lines.filter((l) => l.p && Number.isFinite(l.q) && l.q > 0)
+    const usable = lines
+      .filter((l) => l.p && Number.isFinite(l.q) && l.q > 0)
       .map((l) => ({ qty: l.q, unitPrice: l.p.price, cost: l.p.cost }));
     return window.DukaanSales.calc(usable, extras.discount, extras.tax);
   }
 
-  // A single "paid in full" row follows the bill total automatically until the user edits it.
   function syncAutoPayment(total) {
     if (state.payments.length === 1 && state.payments[0].auto) {
       state.payments[0].amount = total > 0 ? total.toFixed(2) : "";
@@ -77,7 +86,10 @@
     const list = [];
     state.payments.forEach((row, i) => {
       const a = U.parseMoney(row.amount);
-      if (Number.isNaN(a) || a <= 0) { errs.push("Payment " + (i + 1) + ": enter an amount above 0, or remove the row."); return; }
+      if (Number.isNaN(a) || a <= 0) {
+        errs.push("Payment " + (i + 1) + ": enter an amount above 0, or remove the row.");
+        return;
+      }
       paidP += Math.round(a * 100);
       list.push({ method: row.method, amount: a });
     });
@@ -89,7 +101,10 @@
   function showMessages(list) {
     const b = $("sBanner");
     b.replaceChildren();
-    if (!list || !list.length) { b.hidden = true; return; }
+    if (!list || !list.length) {
+      b.hidden = true;
+      return;
+    }
     if (list.length === 1) b.textContent = list[0];
     else {
       b.append(el("strong", "", "Please fix these first:"));
@@ -104,7 +119,10 @@
     const wrap = $("sResults");
     wrap.replaceChildren();
     const st = window.DukaanProducts && window.DukaanProducts.stats();
-    if (st && st.failed) { wrap.append(el("p", "alert", "Storage is unavailable, so billing is turned off.")); return; }
+    if (st && st.failed) {
+      wrap.append(el("p", "alert", "Storage is unavailable, so billing is turned off."));
+      return;
+    }
     const all = products().filter((p) => p.status === "active");
     if (!all.length) {
       wrap.append(el("p", "muted", "No active products yet. Add products on the Products page first."));
@@ -114,12 +132,23 @@
     let list = q ? all.filter((p) => [p.name, p.sku, p.barcode].join(" ").toLowerCase().includes(q)) : all.slice();
     list.sort((a, b) => a.name.localeCompare(b.name));
     list = list.slice(0, 8);
-    if (!list.length) { wrap.append(el("p", "muted", "No product matches “" + $("sSearch").value.trim() + "”.")); return; }
+    if (!list.length) {
+      wrap.append(el("p", "muted", "No product matches “" + $("sSearch").value.trim() + "”."));
+      return;
+    }
     list.forEach((p) => {
       const row = el("div", "result");
       const left = el("div");
-      left.append(el("strong", "", p.name),
-        el("div", "card-hint", [p.sku ? "SKU " + p.sku : "", U.money(p.price) + " per " + p.unit, "Stock " + U.qty(p.stock, p.unit)].filter(Boolean).join(" · ")));
+      left.append(
+        el("strong", "", p.name),
+        el(
+          "div",
+          "card-hint",
+          [p.sku ? "SKU " + p.sku : "", U.money(p.price) + " per " + p.unit, "Stock " + U.qty(p.stock, p.unit)]
+            .filter(Boolean)
+            .join(" · ")
+        )
+      );
       const b = el("button", "btn btn-sm" + (p.stock > 0 ? " btn-primary" : ""), p.stock > 0 ? "Add" : "Out of stock");
       b.type = "button";
       b.dataset.add = p.id;
@@ -133,7 +162,10 @@
   function renderCart() {
     const wrap = $("sCart");
     wrap.replaceChildren();
-    if (!state.cart.length) { wrap.append(el("p", "muted", "No items yet. Search above and tap Add.")); return; }
+    if (!state.cart.length) {
+      wrap.append(el("p", "muted", "No items yet. Search above and tap Add."));
+      return;
+    }
     cartLines().forEach((l, i) => {
       const name = l.p ? l.p.name : "Unavailable item";
       const unit = l.p ? l.p.unit : "";
@@ -142,16 +174,36 @@
       const left = el("div");
       left.append(el("strong", "", name));
       if (l.p) left.append(el("div", "card-hint", U.money(l.p.price) + " per " + unit + " · In stock " + U.qty(l.p.stock, unit)));
-      const lineTotal = l.p && Number.isFinite(l.q) && l.q > 0 ? window.DukaanSales.calc([{ qty: l.q, unitPrice: l.p.price, cost: 0 }], null, 0).subtotal : 0;
+      const lineTotal =
+        l.p && Number.isFinite(l.q) && l.q > 0
+          ? window.DukaanSales.calc([{ qty: l.q, unitPrice: l.p.price, cost: 0 }], null, 0).subtotal
+          : 0;
       top.append(left, el("strong", "", l.p ? U.money2(lineTotal) : "–"));
 
       const ctl = el("div", "cart-ctl");
-      const dec = el("button", "btn btn-sm qty-btn", "−"); dec.type = "button"; dec.dataset.act = "dec"; dec.dataset.idx = i; dec.setAttribute("aria-label", "Decrease quantity of " + name);
-      const inc = el("button", "btn btn-sm qty-btn", "+"); inc.type = "button"; inc.dataset.act = "inc"; inc.dataset.idx = i; inc.setAttribute("aria-label", "Increase quantity of " + name);
-      const input = el("input", "qty-input"); input.type = "text"; input.inputMode = "decimal"; input.autocomplete = "off";
-      input.value = l.item.qty; input.dataset.idx = i; input.setAttribute("aria-label", "Quantity of " + name + (unit ? " in " + unit : ""));
+      const dec = el("button", "btn btn-sm qty-btn", "−");
+      dec.type = "button";
+      dec.dataset.act = "dec";
+      dec.dataset.idx = i;
+      dec.setAttribute("aria-label", "Decrease quantity of " + name);
+      const inc = el("button", "btn btn-sm qty-btn", "+");
+      inc.type = "button";
+      inc.dataset.act = "inc";
+      inc.dataset.idx = i;
+      inc.setAttribute("aria-label", "Increase quantity of " + name);
+      const input = el("input", "qty-input");
+      input.type = "text";
+      input.inputMode = "decimal";
+      input.autocomplete = "off";
+      input.value = l.item.qty;
+      input.dataset.idx = i;
+      input.setAttribute("aria-label", "Quantity of " + name + (unit ? " in " + unit : ""));
       if (l.err) input.setAttribute("aria-invalid", "true");
-      const del = el("button", "btn btn-sm", "Remove"); del.type = "button"; del.dataset.act = "del"; del.dataset.idx = i; del.setAttribute("aria-label", "Remove " + name + " from bill");
+      const del = el("button", "btn btn-sm", "Remove");
+      del.type = "button";
+      del.dataset.act = "del";
+      del.dataset.idx = i;
+      del.setAttribute("aria-label", "Remove " + name + " from bill");
       ctl.append(dec, input, inc, el("span", "card-hint", unit), del);
       row.append(top, ctl);
       if (l.err) row.append(el("div", "err", l.err));
@@ -166,19 +218,37 @@
       const r = el("div", "pay-row");
       const mLabel = el("label");
       mLabel.append(el("span", "sr-only", "Payment method " + (i + 1)));
-      const sel = el("select"); sel.dataset.idx = i; sel.dataset.field = "method";
-      Object.keys(U.METHODS).forEach((k) => { const o = new Option(U.METHODS[k], k); if (k === row.method) o.selected = true; sel.append(o); });
+      const sel = el("select");
+      sel.dataset.idx = i;
+      sel.dataset.field = "method";
+      Object.keys(U.METHODS).forEach((k) => {
+        const o = new Option(U.METHODS[k], k);
+        if (k === row.method) o.selected = true;
+        sel.append(o);
+      });
       mLabel.append(sel);
       const aLabel = el("label");
       aLabel.append(el("span", "sr-only", "Amount received " + (i + 1)));
-      const inp = el("input"); inp.type = "text"; inp.inputMode = "decimal"; inp.autocomplete = "off"; inp.placeholder = "Amount (₹)";
-      inp.value = row.amount; inp.dataset.idx = i; inp.dataset.field = "amount";
+      const inp = el("input");
+      inp.type = "text";
+      inp.inputMode = "decimal";
+      inp.autocomplete = "off";
+      inp.placeholder = "Amount (₹)";
+      inp.value = row.amount;
+      inp.dataset.idx = i;
+      inp.dataset.field = "amount";
       aLabel.append(inp);
-      const del = el("button", "btn btn-sm", "Remove"); del.type = "button"; del.dataset.act = "delpay"; del.dataset.idx = i; del.setAttribute("aria-label", "Remove payment " + (i + 1));
+      const del = el("button", "btn btn-sm", "Remove");
+      del.type = "button";
+      del.dataset.act = "delpay";
+      del.dataset.idx = i;
+      del.setAttribute("aria-label", "Remove payment " + (i + 1));
       r.append(mLabel, aLabel, del);
       wrap.append(r);
     });
-    if (!state.payments.length) wrap.append(el("p", "muted", "No payment received: the whole bill will be on credit (udhaar)."));
+    if (!state.payments.length) {
+      wrap.append(el("p", "muted", "No payment received: the whole bill will be on credit (udhaar)."));
+    }
   }
 
   function sumRow(label, value, cls) {
@@ -192,7 +262,7 @@
     const extras = readExtras();
     const t = currentTotals(lines, extras);
     syncAutoPayment(t.total);
-    // keep the visible amount of an automatic row in step with the total
+
     if (state.payments.length === 1 && state.payments[0].auto) {
       const inp = $("sPayRows").querySelector('input[data-field="amount"]');
       if (inp) inp.value = state.payments[0].amount;
@@ -211,8 +281,38 @@
     box.append(sumRow("Bill total", U.money2(t.total), "sum-total"));
     box.append(sumRow("Received now", U.money2(pi.paidP / 100)));
     box.append(sumRow("On credit (udhaar)", U.money2(due), due > 0 ? "sum-due" : ""));
+
     if (pi.paidP > t.totalP) box.append(el("div", "err", "Payments are more than the bill total."));
-    if (due > 0) box.append(el("div", "card-hint", "Credit needs the customer’s name."));
+    if (due > 0) {
+      if (!state.customerId) {
+        box.append(el("div", "err", "Credit sale requires a registered customer."));
+      } else {
+        box.append(el("div", "card-hint", "Credit will be added to the customer’s ledger."));
+      }
+    }
+  }
+
+  function updateCustomerBalanceDisplay() {
+    const box = $("sCustBalanceBox");
+    if (!box) return;
+    box.replaceChildren();
+
+    if (state.customerId && window.DukaanCustomers) {
+      const c = window.DukaanCustomers.get(state.customerId);
+      if (c) {
+        const bal = window.DukaanCustomers.getBalance(c.id);
+        const p = el("div", "card-hint");
+        p.style.fontWeight = "600";
+        p.append(
+          el("span", "", "Selected: " + c.name + (c.phone ? " (" + c.phone + ")" : "") + " · "),
+          el("span", bal > 0 ? "sum-due" : "", "Current credit balance: " + U.money2(bal))
+        );
+        box.append(p);
+        box.hidden = false;
+        return;
+      }
+    }
+    box.hidden = true;
   }
 
   function renderAll() {
@@ -220,6 +320,7 @@
     renderCart();
     renderPayments();
     renderSummary();
+    updateCustomerBalanceDisplay();
   }
 
   /* ---------- actions ---------- */
@@ -243,8 +344,11 @@
     state.cart = [];
     state.payments = defaultPayments();
     state.saleId = DB.uid();
+    state.customerId = null;
     $("sDiscType").value = "amount";
-    ["sDiscValue", "sTax", "sCustName", "sCustPhone", "sSearch"].forEach((id) => { $(id).value = ""; });
+    ["sDiscValue", "sTax", "sCustName", "sCustPhone", "sSearch"].forEach((id) => {
+      $(id).value = "";
+    });
     showMessages([]);
     renderAll();
   }
@@ -253,7 +357,9 @@
     const errs = [];
     const lines = cartLines();
     if (!lines.length) errs.push("Add at least one product.");
-    lines.forEach((l) => { if (l.err) errs.push((l.p ? l.p.name : "Item") + ": " + l.err); });
+    lines.forEach((l) => {
+      if (l.err) errs.push((l.p ? l.p.name : "Item") + ": " + l.err);
+    });
     const extras = readExtras();
     if (extras.dErr) errs.push(extras.dErr);
     if (extras.tErr) errs.push(extras.tErr);
@@ -262,13 +368,48 @@
     if (lines.length && t.totalP <= 0) errs.push("The bill total must be more than zero.");
     const pi = paymentInfo();
     if (lines.length) pi.errs.forEach((m) => errs.push(m));
-    if (pi.paidP > t.totalP) errs.push("Payments (" + U.money2(pi.paidP / 100) + ") are more than the bill total (" + U.money2(t.total) + ").");
+    if (pi.paidP > t.totalP) {
+      errs.push("Payments (" + U.money2(pi.paidP / 100) + ") are more than the bill total (" + U.money2(t.total) + ").");
+    }
+
     const dueP = t.totalP - pi.paidP;
-    const name = $("sCustName").value.trim();
-    if (dueP > 0 && !name) errs.push("Enter the customer’s name: " + U.money2(dueP / 100) + " will be on credit (udhaar).");
-    if (name.length > 80) errs.push("Customer name is too long (max 80 characters).");
+    const nameInput = $("sCustName").value.trim();
+    const phoneInput = $("sCustPhone").value.trim();
+
+    // Re-verify customer association
+    if (!state.customerId && nameInput && window.DukaanCustomers) {
+      const allCusts = window.DukaanCustomers.list().filter((c) => c.status === "active");
+      const match = allCusts.find(
+        (c) =>
+          c.name.toLowerCase() === nameInput.toLowerCase() ||
+          (phoneInput && c.phone && c.phone === phoneInput)
+      );
+      if (match) {
+        state.customerId = match.id;
+      }
+    }
+
+    if (dueP > 0) {
+      if (!state.customerId) {
+        errs.push(
+          "A registered customer is required because " +
+            U.money2(dueP / 100) +
+            " will be on credit (udhaar). Tap '+ New Customer' or select an existing customer."
+        );
+      }
+    }
+
+    if (nameInput.length > 80) errs.push("Customer name is too long (max 80 characters).");
     const items = lines.filter((l) => !l.err && l.p).map((l) => ({ productId: l.p.id, qty: l.q, unitPrice: l.p.price }));
-    return { errs: errs, items: items, extras: extras, payments: pi.list, name: name };
+    return {
+      errs: errs,
+      items: items,
+      extras: extras,
+      payments: pi.list,
+      customerId: state.customerId,
+      name: nameInput,
+      phone: phoneInput
+    };
   }
 
   function setBusy(busy) {
@@ -279,20 +420,32 @@
   }
 
   async function onComplete() {
-    if (state.busy) return; // ignores repeated clicks while a save is running
+    if (state.busy) return;
     const v = validateBill();
-    if (v.errs.length) { showMessages(v.errs); return; }
+    if (v.errs.length) {
+      showMessages(v.errs);
+      return;
+    }
     showMessages([]);
     setBusy(true);
     try {
       const sale = await window.DukaanSales.complete({
-        id: state.saleId, items: v.items, discount: v.extras.discount, taxRate: v.extras.tax,
-        payments: v.payments, customerName: v.name, customerPhone: $("sCustPhone").value.trim(), prefix: settings().prefix
+        id: state.saleId,
+        items: v.items,
+        discount: v.extras.discount,
+        taxRate: v.extras.tax,
+        payments: v.payments,
+        customerId: v.customerId,
+        customerName: v.name,
+        customerPhone: v.phone,
+        prefix: settings().prefix
       });
-      // The database has committed. Only now do we confirm and clear the bill.
+
       newBill();
       document.dispatchEvent(new CustomEvent("stock-changed"));
       await window.DukaanSales.refresh();
+      if (window.DukaanCustomers) await window.DukaanCustomers.refresh();
+
       U.toast("Sale saved: " + sale.invoiceNo);
       window.DukaanHistory.showSale(sale.id, { justSaved: true });
     } catch (err) {
@@ -303,7 +456,7 @@
         window.DukaanHistory.showSale(err.sale.id, { justSaved: true, duplicate: true });
       } else {
         showMessages([err.message]);
-        document.dispatchEvent(new CustomEvent("stock-changed")); // reload products so the screen matches the database
+        document.dispatchEvent(new CustomEvent("stock-changed"));
       }
     } finally {
       setBusy(false);
@@ -319,12 +472,56 @@
     if (!q) return;
     const active = products().filter((p) => p.status === "active");
     const exact = active.find((p) => (p.barcode && p.barcode.toLowerCase() === q) || (p.sku && p.sku.toLowerCase() === q));
-    const hit = exact || active.filter((p) => [p.name, p.sku, p.barcode].join(" ").toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name))[0];
+    const hit =
+      exact ||
+      active
+        .filter((p) => [p.name, p.sku, p.barcode].join(" ").toLowerCase().includes(q))
+        .sort((a, b) => a.name.localeCompare(b.name))[0];
     if (!hit) return;
-    if (hit.stock <= 0) { showMessages(["“" + hit.name + "” is out of stock."]); return; }
+    if (hit.stock <= 0) {
+      showMessages(["“" + hit.name + "” is out of stock."]);
+      return;
+    }
     addToCart(hit.id);
     $("sSearch").value = "";
     renderResults();
+  }
+
+  function updateCustomerSuggestions() {
+    const dl = $("customerNames");
+    if (!dl) return;
+    dl.replaceChildren();
+    if (!window.DukaanCustomers) return;
+
+    window.DukaanCustomers.list().forEach((c) => {
+      if (c.status !== "active") return;
+      const opt = document.createElement("option");
+      opt.value = c.name + (c.phone ? " (" + c.phone + ")" : "");
+      opt.dataset.id = c.id;
+      dl.append(opt);
+    });
+  }
+
+  function onCustomerInput() {
+    const val = $("sCustName").value.trim();
+    if (!window.DukaanCustomers) return;
+
+    const list = window.DukaanCustomers.list().filter((c) => c.status === "active");
+    const match = list.find(
+      (c) =>
+        c.name.toLowerCase() === val.toLowerCase() ||
+        (c.name + (c.phone ? " (" + c.phone + ")" : "")).toLowerCase() === val.toLowerCase()
+    );
+
+    if (match) {
+      state.customerId = match.id;
+      $("sCustName").value = match.name;
+      $("sCustPhone").value = match.phone || "";
+    } else {
+      state.customerId = null;
+    }
+    updateCustomerBalanceDisplay();
+    renderSummary();
   }
 
   function init() {
@@ -364,11 +561,25 @@
     ["sDiscType", "sDiscValue", "sTax"].forEach((id) => $(id).addEventListener("input", renderSummary));
     $("sDiscType").addEventListener("change", renderSummary);
 
-    $("sPayCash").addEventListener("click", () => { state.payments = [{ method: "cash", amount: "", auto: true }]; renderPayments(); renderSummary(); });
-    $("sPayUpi").addEventListener("click", () => { state.payments = [{ method: "upi", amount: "", auto: true }]; renderPayments(); renderSummary(); });
-    $("sPayCredit").addEventListener("click", () => { state.payments = []; renderPayments(); renderSummary(); });
+    $("sPayCash").addEventListener("click", () => {
+      state.payments = [{ method: "cash", amount: "", auto: true }];
+      renderPayments();
+      renderSummary();
+    });
+    $("sPayUpi").addEventListener("click", () => {
+      state.payments = [{ method: "upi", amount: "", auto: true }];
+      renderPayments();
+      renderSummary();
+    });
+    $("sPayCredit").addEventListener("click", () => {
+      state.payments = [];
+      renderPayments();
+      renderSummary();
+    });
     $("sPayAdd").addEventListener("click", () => {
-      state.payments.forEach((r) => { r.auto = false; });
+      state.payments.forEach((r) => {
+        r.auto = false;
+      });
       const t = currentTotals(cartLines(), readExtras());
       const remaining = Math.max(0, t.totalP - paymentInfo().paidP) / 100;
       state.payments.push({ method: "cash", amount: remaining > 0 ? remaining.toFixed(2) : "", auto: false });
@@ -386,31 +597,84 @@
       const f = e.target.dataset.field;
       const row = state.payments[Number(e.target.dataset.idx)];
       if (!row) return;
-      if (f === "amount") { row.amount = e.target.value; row.auto = false; renderSummary(); }
+      if (f === "amount") {
+        row.amount = e.target.value;
+        row.auto = false;
+        renderSummary();
+      }
     });
     $("sPayRows").addEventListener("change", (e) => {
       const row = state.payments[Number(e.target.dataset.idx)];
       if (row && e.target.dataset.field === "method") row.method = e.target.value;
     });
 
+    // Customer input handling in Billing
+    $("sCustName").addEventListener("input", onCustomerInput);
+    $("sCustName").addEventListener("change", onCustomerInput);
+    $("sCustPhone").addEventListener("input", () => {
+      if (!state.customerId && $("sCustPhone").value.trim() && window.DukaanCustomers) {
+        const ph = $("sCustPhone").value.trim();
+        const match = window.DukaanCustomers.list().find((c) => c.status === "active" && c.phone === ph);
+        if (match) {
+          state.customerId = match.id;
+          $("sCustName").value = match.name;
+          updateCustomerBalanceDisplay();
+          renderSummary();
+        }
+      }
+    });
+
+    // Quick Add Customer button from Billing without losing cart
+    const quickAddBtn = $("sCustQuickAdd");
+    if (quickAddBtn) {
+      quickAddBtn.addEventListener("click", () => {
+        if (window.DukaanCustomers) {
+          window.DukaanCustomers.openAddDialog(null, {
+            name: $("sCustName").value.trim(),
+            phone: $("sCustPhone").value.trim()
+          });
+        }
+      });
+    }
+
+    // Listener for customer added from quick-add modal
+    document.addEventListener("customer-quick-added", (e) => {
+      if (e.detail && e.detail.customer) {
+        state.customerId = e.detail.customer.id;
+        $("sCustName").value = e.detail.customer.name;
+        $("sCustPhone").value = e.detail.customer.phone || "";
+        updateCustomerSuggestions();
+        updateCustomerBalanceDisplay();
+        renderSummary();
+      }
+    });
+
     $("sComplete").addEventListener("click", onComplete);
     $("sClear").addEventListener("click", () => {
-      if (!state.cart.length) { newBill(); return; }
+      if (!state.cart.length) {
+        newBill();
+        return;
+      }
       if (window.confirm("Clear this bill? The items and payments you entered will be removed.")) newBill();
     });
 
     document.addEventListener("products-changed", renderAll);
     document.addEventListener("sales-changed", () => {
-      const dl = $("customerNames");
-      dl.replaceChildren();
-      window.DukaanSales.customerNames().forEach((n) => { const o = document.createElement("option"); o.value = n; dl.append(o); });
+      updateCustomerSuggestions();
+    });
+    document.addEventListener("customers-changed", () => {
+      updateCustomerSuggestions();
+      updateCustomerBalanceDisplay();
     });
 
-    // Do not lose a half-finished bill by accident.
     window.addEventListener("beforeunload", (e) => {
-      if (state.cart.length) { e.preventDefault(); e.returnValue = ""; }
+      if (state.cart.length) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
     });
 
+    updateCustomerSuggestions();
     renderAll();
   }
 
