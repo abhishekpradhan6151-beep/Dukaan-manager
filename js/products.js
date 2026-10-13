@@ -623,6 +623,8 @@
       if (p) openAdjust(p); // detail dialog stays open underneath and refreshes after saving
     });
     $("dtArchive").addEventListener("click", () => toggleArchive(state.detailId));
+    // A sale or a cancellation changed stock in the database: reload the list.
+    document.addEventListener("stock-changed", refresh);
 
     refresh();
   }
@@ -636,7 +638,11 @@
       return { total: active.length, low: active.filter(isLow).length };
     },
     toCsv: toCsv,
-    _validate: validateProduct
+    _validate: validateProduct,
+    // Added in Phase 3 so billing can read the same product list and unit rules:
+    list: () => state.products.slice(),
+    refresh: refresh,
+    isDecimalUnit: (u) => unitInfo(u).decimal
   };
 
   document.addEventListener("DOMContentLoaded", init);

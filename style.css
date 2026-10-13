@@ -233,3 +233,73 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .kv dd { margin-bottom: .5rem; }
   .toolbar .check { flex: 1 1 100%; }
 }
+
+/* ===== Phase 3: billing, sales history, receipts, printing ===== */
+.btn-lg { min-height: 52px; width: 100%; font-size: 1.05rem; margin-top: .8rem; }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: #fbe4e4; }
+.field-sm input { min-width: 150px; }
+.toolbar label.field-sm { font-size: .75rem; color: var(--muted); }
+
+.sale-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1rem; align-items: start; }
+.sale-grid .panel { margin-bottom: 1rem; }
+.results { margin-top: .6rem; }
+.result { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .55rem 0; border-bottom: 1px solid var(--border); }
+.result:last-child { border-bottom: 0; }
+.cart-row { padding: .7rem 0; border-bottom: 1px solid var(--border); }
+.cart-row:last-child { border-bottom: 0; }
+.cart-top { display: flex; justify-content: space-between; gap: .6rem; }
+.cart-ctl { display: flex; align-items: center; gap: .4rem; margin-top: .5rem; flex-wrap: wrap; }
+.qty-btn { min-width: 44px; min-height: 44px; font-size: 1.1rem; padding: 0; }
+.qty-input { width: 5.5rem; text-align: center; }
+.pay-rows { margin-top: .6rem; }
+.pay-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+.sum-row { display: flex; justify-content: space-between; padding: .25rem 0; }
+.sum-total { font-weight: 700; font-size: 1.2rem; border-top: 2px solid var(--green); margin-top: .3rem; padding-top: .5rem; }
+.sum-due { font-weight: 700; color: #5c4400; }
+
+/* receipt (shown on screen in the sale dialog, and in the print area) */
+.receipt-preview { background: #f4f1e8; border: 1px dashed var(--border); border-radius: 10px; padding: .8rem; margin: .8rem 0 1rem; display: flex; justify-content: center; overflow-x: auto; }
+.receipt { font-family: "Courier New", ui-monospace, monospace; color: #000; background: #fff; font-size: 12px; line-height: 1.4; }
+.receipt.compact { width: 72mm; max-width: 100%; padding: 3mm; }
+.receipt .rw { display: flex; justify-content: space-between; gap: .6rem; }
+.receipt .rw span:first-child { flex: 1; }
+.receipt .rw span:last-child { text-align: right; white-space: nowrap; }
+.receipt .c { text-align: center; }
+.receipt .b { font-weight: 700; }
+.receipt .big { font-size: 1.15em; }
+.receipt .hr { border-top: 1px dashed #000; margin: .4rem 0; }
+.receipt .item-name { font-weight: 700; word-break: break-word; }
+.receipt .stamp { text-align: center; font-weight: 700; border: 2px solid #000; padding: .15rem; margin: .4rem 0; letter-spacing: .2em; }
+.receipt.a4 { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px; width: 100%; }
+.a4-head { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 2px solid #000; padding-bottom: .6rem; margin-bottom: .8rem; }
+.a4-shop { margin: 0 0 .2rem; font-size: 1.4rem; }
+.a4-meta { text-align: right; }
+.a4-title { font-weight: 700; font-size: 1.3rem; letter-spacing: .1em; }
+.a4-table { width: 100%; border-collapse: collapse; margin: .8rem 0; }
+.a4-table th, .a4-table td { border-bottom: 1px solid #999; padding: .35rem .5rem; text-align: left; white-space: normal; }
+.a4-table th { background: #eee; color: #000; font-size: .8rem; }
+.a4-table .num { text-align: right; }
+.a4-totals { width: 50%; margin-left: auto; }
+.a4-pay { width: 50%; margin: .8rem 0 0 auto; }
+.a4-foot { margin-top: 1.2rem; font-weight: 700; }
+.a4-note { margin-top: .5rem; font-size: .75rem; color: #444; }
+
+#printArea { display: none; }
+@media print {
+  body > *:not(#printArea) { display: none !important; }
+  #printArea { display: block !important; }
+  body { background: #fff; overflow: visible; }
+  .receipt.compact { padding: 0; }
+}
+
+@media (max-width: 1024px) {
+  .sale-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .pay-row { grid-template-columns: 1fr 1fr; }
+  .pay-row .btn { grid-column: span 2; }
+  .toolbar .grow { flex-basis: 100%; }
+  .field-sm { flex: 1 1 45%; }
+  .field-sm input { min-width: 0; }
+}

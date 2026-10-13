@@ -1,5 +1,5 @@
 /*
- * db.js - IndexedDB storage helper (Phase 2).
+ * db.js - IndexedDB storage helper (Phase 2, extended in Phase 3).
  * All business records live in IndexedDB, never in localStorage.
  * Other files call DukaanDB.run(...) so every change happens inside a
  * transaction, and success is reported only after the transaction commits.
@@ -8,7 +8,8 @@
   "use strict";
 
   const DB_NAME = "dukaan-manager";
-  const DB_VERSION = 1;
+  // Version 2 (Phase 3) adds sales, counters and settings. Existing v1 data is kept as is.
+  const DB_VERSION = 2;
   let dbPromise = null;
 
   function friendly(err) {
@@ -48,6 +49,19 @@
         if (!db.objectStoreNames.contains("stockHistory")) {
           const s = db.createObjectStore("stockHistory", { keyPath: "id" });
           s.createIndex("productId", "productId");
+        }
+        // --- added in version 2 (Phase 3) ---
+        if (!db.objectStoreNames.contains("sales")) {
+          const s = db.createObjectStore("sales", { keyPath: "id" });
+          s.createIndex("invoiceNo", "invoiceNo", { unique: true });
+          s.createIndex("dateKey", "dateKey");
+          s.createIndex("status", "status");
+        }
+        if (!db.objectStoreNames.contains("counters")) {
+          db.createObjectStore("counters", { keyPath: "name" }); // invoice number counter
+        }
+        if (!db.objectStoreNames.contains("settings")) {
+          db.createObjectStore("settings", { keyPath: "key" }); // shop details
         }
       };
       req.onsuccess = () => {

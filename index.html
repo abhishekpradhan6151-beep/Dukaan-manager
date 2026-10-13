@@ -11,7 +11,7 @@
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>DEMO PROTOTYPE</strong> &mdash; Sales, payment and customer figures are sample data. Only products you add are saved (on this device).
+    <strong>PROTOTYPE (Phase 3)</strong> &mdash; Products, sales and settings are saved only in this browser on this device. Customer ledger, expenses, reports and backup are not built yet.
   </div>
 
   <div class="app">
@@ -24,7 +24,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 2 &middot; Demo build</p>
+      <p class="sidebar-note">Phase 3 &middot; Prototype</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -34,8 +34,8 @@
           <span aria-hidden="true">&#9776;</span>
         </button>
         <div class="shop-title">
-          <span class="shop-name" id="shopName">Demo Kirana Store</span>
-          <span class="shop-sub">Sample shop (not real)</span>
+          <span class="shop-name" id="shopName">Your shop</span>
+          <span class="shop-sub" id="shopSub"></span>
         </div>
         <div class="topbar-right">
           <span class="status-pill" id="netStatus" role="status" aria-live="polite">
@@ -56,7 +56,7 @@
             <label class="inline-field">
               <span>Period</span>
               <select id="dateFilter">
-                <option value="today" selected>Today (demo)</option>
+                <option value="today" selected>Today</option>
                 <option value="week" disabled>This week (Phase 5)</option>
                 <option value="month" disabled>This month (Phase 5)</option>
               </select>
@@ -70,7 +70,7 @@
             <button class="btn" data-go="customers">Customers</button>
           </div>
 
-          <h2 class="section-title">Money &amp; sales (demo figures)</h2>
+          <h2 class="section-title">Today&rsquo;s money &amp; sales</h2>
           <div class="cards" id="cardsMoney"></div>
 
           <h2 class="section-title">Stock &amp; credit</h2>
@@ -86,14 +86,73 @@
 
         <!-- NEW SALE -->
         <section class="view" id="view-sale" aria-labelledby="h-sale" hidden>
-          <div class="page-head"><h1 id="h-sale">New Sale</h1></div>
-          <div class="empty-state">
-            <h2>Billing is coming in Phase 3</h2>
-            <p>Search products, build a cart, take cash, UPI, card or udhaar, and print a receipt.</p>
+          <div class="page-head">
+            <h1 id="h-sale">New Sale</h1>
+            <button class="btn" type="button" id="sClear">Clear bill</button>
           </div>
-          <div class="shell-grid">
-            <div class="panel"><h3>Product search</h3><label for="saleSearch">Search by name or SKU</label><input id="saleSearch" type="search" disabled placeholder="Available in Phase 3"></div>
-            <div class="panel"><h3>Cart</h3><p class="muted">No items. Cart will appear here.</p></div>
+          <div id="sBanner" class="alert" role="alert" hidden></div>
+          <div class="sale-grid">
+            <div class="sale-left">
+              <div class="panel">
+                <h3>Find products</h3>
+                <label>Search by name, SKU or barcode
+                  <input id="sSearch" type="search" autocomplete="off" placeholder="Name, SKU or barcode">
+                </label>
+                <div id="sResults" class="results"></div>
+              </div>
+              <div class="panel">
+                <h3>Bill items</h3>
+                <div id="sCart"></div>
+              </div>
+            </div>
+            <div class="sale-right">
+              <div class="panel">
+                <h3>Customer</h3>
+                <div class="form-grid">
+                  <label>Name
+                    <input id="sCustName" type="text" list="customerNames" maxlength="80" autocomplete="off" placeholder="Walk-in if empty">
+                  </label>
+                  <label>Phone (optional)
+                    <input id="sCustPhone" type="tel" maxlength="20" autocomplete="off">
+                  </label>
+                </div>
+                <p class="card-hint">A name is needed only when something is on credit (udhaar).</p>
+              </div>
+              <div class="panel">
+                <h3>Discount and tax</h3>
+                <div class="form-grid">
+                  <label>Discount type
+                    <select id="sDiscType">
+                      <option value="amount">Amount (&#8377;)</option>
+                      <option value="percent">Percent (%)</option>
+                    </select>
+                  </label>
+                  <label>Discount
+                    <input id="sDiscValue" type="text" inputmode="decimal" autocomplete="off">
+                    <span class="err" id="e-sDisc"></span>
+                  </label>
+                  <label class="span2">Tax % (leave empty for no tax)
+                    <input id="sTax" type="text" inputmode="decimal" autocomplete="off" placeholder="No tax">
+                    <span class="err" id="e-sTax"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="panel">
+                <h3>Payment received now</h3>
+                <div class="quick-actions">
+                  <button class="btn btn-sm" type="button" id="sPayCash">Cash, paid in full</button>
+                  <button class="btn btn-sm" type="button" id="sPayUpi">UPI, paid in full</button>
+                  <button class="btn btn-sm" type="button" id="sPayCredit">All on credit (udhaar)</button>
+                  <button class="btn btn-sm" type="button" id="sPayAdd">+ Part / split payment</button>
+                </div>
+                <div id="sPayRows" class="pay-rows"></div>
+                <p class="card-hint">UPI, card and bank entries are payment records only. This app does not process payments. Anything not paid now stays as credit.</p>
+              </div>
+              <div class="panel">
+                <div id="sSummary"></div>
+                <button class="btn btn-primary btn-lg" type="button" id="sComplete">Complete sale</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -138,14 +197,34 @@
         <!-- SALES HISTORY -->
         <section class="view" id="view-sales" aria-labelledby="h-sales" hidden>
           <div class="page-head"><h1 id="h-sales">Sales History</h1></div>
+          <div id="hError" class="alert" role="alert" hidden></div>
           <div class="toolbar">
-            <label class="grow"><span class="sr-only">Search invoice or customer</span><input type="search" disabled placeholder="Invoice number or customer"></label>
-            <label><span class="sr-only">Payment method</span><select disabled><option>All payments</option></select></label>
+            <label class="grow"><span class="sr-only">Search by invoice number or customer</span><input type="search" id="hSearch" placeholder="Invoice or customer" autocomplete="off"></label>
+            <label class="field-sm">From<input type="date" id="hFrom"></label>
+            <label class="field-sm">To<input type="date" id="hTo"></label>
+            <label><span class="sr-only">Payment method</span>
+              <select id="hMethod">
+                <option value="">All payments</option>
+                <option value="cash">Cash</option>
+                <option value="upi">UPI</option>
+                <option value="card">Card</option>
+                <option value="bank">Bank transfer</option>
+                <option value="credit">Has credit due</option>
+              </select>
+            </label>
+            <label><span class="sr-only">Status</span>
+              <select id="hStatus">
+                <option value="">All statuses</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </label>
+            <button class="btn" type="button" id="hClear">Clear filters</button>
           </div>
-          <div class="empty-state">
-            <h2>No sales recorded</h2>
-            <p>Completed bills, reprints and returns will be listed here (Phase 3).</p>
-          </div>
+          <p class="muted" id="hCount" aria-live="polite"></p>
+          <div id="hList"></div>
+          <div class="center"><button class="btn" type="button" id="hMore" hidden>Show more</button></div>
+          <p class="card-hint">A whole sale can be cancelled from its details. Partial returns and refund records are not built yet.</p>
         </section>
 
         <!-- CUSTOMERS -->
@@ -184,17 +263,39 @@
         <!-- SETTINGS -->
         <section class="view" id="view-settings" aria-labelledby="h-settings" hidden>
           <div class="page-head"><h1 id="h-settings">Settings &amp; Backup</h1></div>
-          <div class="panel">
-            <h3>Shop details</h3>
-            <p class="muted">Editable and saved from Phase 6. Fields are locked in this demo.</p>
+          <form class="panel" id="shopForm" novalidate>
+            <h3>Shop details (printed on receipts)</h3>
+            <div id="stBanner" class="alert" role="alert" hidden></div>
             <div class="form-grid">
-              <label>Shop name<input type="text" value="Demo Kirana Store" disabled></label>
-              <label>Phone<input type="tel" disabled placeholder="Optional"></label>
-              <label class="span2">Address<input type="text" disabled placeholder="Optional"></label>
-              <label>Invoice prefix<input type="text" value="INV" disabled></label>
-              <label>Default tax<select disabled><option>Off (default)</option></select></label>
+              <label>Shop name
+                <input id="stName" type="text" maxlength="80" autocomplete="off">
+                <span class="err" id="e-stName"></span>
+              </label>
+              <label>Phone (optional)
+                <input id="stPhone" type="tel" maxlength="20" autocomplete="off">
+                <span class="err" id="e-stPhone"></span>
+              </label>
+              <label class="span2">Address (optional)
+                <input id="stAddress" type="text" maxlength="200" autocomplete="off">
+                <span class="err" id="e-stAddress"></span>
+              </label>
+              <label>Invoice prefix
+                <input id="stPrefix" type="text" maxlength="8" autocomplete="off">
+                <span class="err" id="e-stPrefix"></span>
+              </label>
+              <label>Default tax
+                <select disabled><option>Off (enter tax on each bill for now)</option></select>
+              </label>
+              <label class="span2">Receipt footer
+                <input id="stFooter" type="text" maxlength="120" autocomplete="off">
+                <span class="err" id="e-stFooter"></span>
+              </label>
             </div>
-          </div>
+            <p class="card-hint">A new prefix applies to new invoices only. The number keeps counting up and never repeats.</p>
+            <div class="dlg-foot">
+              <button class="btn btn-primary" type="submit" id="stSave">Save shop details</button>
+            </div>
+          </form>
           <div class="panel">
             <h3>Backup &amp; restore</h3>
             <p class="muted">A backup is a file copy of your data. It is not cloud sync. Available in Phase 6.</p>
@@ -315,6 +416,45 @@
     </div>
   </dialog>
 
+  <!-- Sale details, cancellation and printing -->
+  <datalist id="customerNames"></datalist>
+
+  <dialog id="saleDialog" aria-labelledby="sdTitle">
+    <div class="dlg-head">
+      <h2 id="sdTitle">Invoice</h2>
+      <button class="icon-btn" type="button" id="sdClose" aria-label="Close sale details"><span aria-hidden="true">&#10005;</span></button>
+    </div>
+    <div id="sdBanner" class="note-box" hidden></div>
+    <div id="sdPreview" class="receipt-preview"></div>
+    <h3>History of this sale</h3>
+    <div id="sdAudit"></div>
+    <div class="dlg-foot">
+      <button class="btn btn-danger" type="button" id="sdCancel">Cancel this sale</button>
+      <button class="btn" type="button" id="sdPrintA4">Print A4 invoice</button>
+      <button class="btn btn-primary" type="button" id="sdPrint">Print receipt</button>
+    </div>
+    <p class="card-hint">Printing uses your browser&rsquo;s print dialog. Choose your printer and paper size there. The app cannot talk to a receipt printer directly.</p>
+  </dialog>
+
+  <dialog id="cancelDialog" aria-labelledby="cTitle">
+    <form id="cancelForm" novalidate>
+      <h2 id="cTitle">Cancel sale?</h2>
+      <p class="muted">The items go back into stock (once only) and the sale is marked cancelled. It is not deleted. Any money already received must be refunded to the customer by you; this app only records the cancellation.</p>
+      <div id="cError" class="alert" role="alert" hidden></div>
+      <label>Reason *
+        <textarea id="cReason" maxlength="200" rows="2"></textarea>
+        <span class="err" id="e-cReason"></span>
+      </label>
+      <div class="dlg-foot">
+        <button class="btn" type="button" id="cBack">Keep sale</button>
+        <button class="btn btn-danger" type="submit" id="cConfirm">Cancel sale</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="printArea" aria-hidden="true"></div>
+  <style id="pageStyle"></style>
+
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <!-- Bottom nav (mobile) -->
@@ -322,9 +462,14 @@
     <ul id="bottomNav"></ul>
   </nav>
 
-  <script src="demo-data.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/settings.js"></script>
   <script src="js/products.js"></script>
+  <script src="js/sales.js"></script>
+  <script src="js/receipt.js"></script>
+  <script src="js/history.js"></script>
+  <script src="js/billing.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
