@@ -1,4 +1,4 @@
-/* Dukaan Manager - Phase 1 (UI shell). No storage or transaction logic yet. */
+/* Dukaan Manager - navigation and dashboard. Products live in js/products.js. */
 (function () {
   "use strict";
 
@@ -89,8 +89,29 @@
     return c;
   }
 
+  // Product counts are LIVE (from your saved products). Customer credit is still a demo figure.
+  function renderStockCards() {
+    const wrap = $("cardsStock");
+    wrap.replaceChildren();
+    const live = window.DukaanProducts && window.DukaanProducts.stats();
+    if (live && live.failed) {
+      wrap.append(
+        card("Total products", "–", "Storage unavailable", "warn"),
+        card("Low stock", "–", "Storage unavailable", "warn")
+      );
+    } else if (live) {
+      wrap.append(
+        card("Total products", String(live.total), "Live: active products on this device"),
+        card("Low stock", String(live.low), "Live: at or below alert level", "warn")
+      );
+    } else {
+      wrap.append(card("Total products", "…", "Loading"), card("Low stock", "…", "Loading", "warn"));
+    }
+    wrap.append(card("Customer credit due", fmt(DEMO.stock.outstandingCredit), "Demo figure (Phase 4)", "gold"));
+  }
+
   function renderDashboard() {
-    const t = DEMO.today, s = DEMO.stock;
+    const t = DEMO.today;
     $("cardsMoney").append(
       card("Total sales", fmt(t.sales), "Value of bills made (revenue)"),
       card("Cash received", fmt(t.cash), "Cash actually collected", "teal"),
@@ -99,11 +120,7 @@
       card("Expenses", fmt(t.expenses), "Money spent today", "gold"),
       card("Est. gross profit", fmt(t.grossProfit), "Estimate, before expenses")
     );
-    $("cardsStock").append(
-      card("Total products", String(s.totalProducts), "Active items"),
-      card("Low stock", String(s.lowStock), "Items needing restock", "warn"),
-      card("Customer credit due", fmt(s.outstandingCredit), "Total outstanding udhaar", "gold")
-    );
+    renderStockCards();
 
     const rows = DEMO.recent;
     if (!rows.length) {
@@ -169,7 +186,11 @@
     $("menuBtn").addEventListener("click", () => toggleMenu(!$("sidebar").classList.contains("open")));
     $("scrim").addEventListener("click", () => toggleMenu(false));
     $("settingsBtn").addEventListener("click", () => go("settings"));
-    document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
+    document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => {
+      go(b.dataset.go);
+      if (b.dataset.action === "add-product" && window.DukaanProducts) window.DukaanProducts.openAdd();
+    }));
+    document.addEventListener("products-changed", renderStockCards);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleMenu(false); });
     window.addEventListener("hashchange", () => go(location.hash.slice(1)));
     go(location.hash.slice(1) || "dashboard");

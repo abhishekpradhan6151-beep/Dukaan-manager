@@ -11,7 +11,7 @@
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>DEMO PROTOTYPE</strong> &mdash; All figures shown are sample data. Nothing is saved yet.
+    <strong>DEMO PROTOTYPE</strong> &mdash; Sales, payment and customer figures are sample data. Only products you add are saved (on this device).
   </div>
 
   <div class="app">
@@ -24,7 +24,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 1 &middot; Demo build</p>
+      <p class="sidebar-note">Phase 2 &middot; Demo build</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -65,12 +65,12 @@
 
           <div class="quick-actions" aria-label="Quick actions">
             <button class="btn btn-primary" data-go="sale">+ New Sale</button>
-            <button class="btn" data-go="products">+ Add Product</button>
+            <button class="btn" data-go="products" data-action="add-product">+ Add Product</button>
             <button class="btn" data-go="expenses">+ Add Expense</button>
             <button class="btn" data-go="customers">Customers</button>
           </div>
 
-          <h2 class="section-title">Money &amp; sales</h2>
+          <h2 class="section-title">Money &amp; sales (demo figures)</h2>
           <div class="cards" id="cardsMoney"></div>
 
           <h2 class="section-title">Stock &amp; credit</h2>
@@ -101,16 +101,38 @@
         <section class="view" id="view-products" aria-labelledby="h-products" hidden>
           <div class="page-head">
             <h1 id="h-products">Products</h1>
-            <button class="btn btn-primary" disabled>+ Add Product</button>
+            <div class="quick-actions">
+              <button class="btn" type="button" id="pExport">Export CSV</button>
+              <button class="btn btn-primary" type="button" id="pAdd">+ Add Product</button>
+            </div>
           </div>
+          <div id="pError" class="alert" role="alert" hidden></div>
           <div class="toolbar">
-            <label class="grow"><span class="sr-only">Search products</span><input type="search" disabled placeholder="Search by name or SKU"></label>
-            <label><span class="sr-only">Category</span><select disabled><option>All categories</option></select></label>
+            <label class="grow"><span class="sr-only">Search products</span><input type="search" id="pSearch" placeholder="Search products" autocomplete="off"></label>
+            <label><span class="sr-only">Category</span><select id="pCategory"><option value="">All categories</option></select></label>
+            <label><span class="sr-only">Status</span>
+              <select id="pStatus">
+                <option value="active" selected>Active products</option>
+                <option value="archived">Archived products</option>
+                <option value="all">All products</option>
+              </select>
+            </label>
+            <label><span class="sr-only">Sort by</span>
+              <select id="pSort">
+                <option value="name-asc" selected>Name A&ndash;Z</option>
+                <option value="name-desc">Name Z&ndash;A</option>
+                <option value="stock-asc">Stock: low to high</option>
+                <option value="stock-desc">Stock: high to low</option>
+                <option value="price-asc">Price: low to high</option>
+                <option value="price-desc">Price: high to low</option>
+                <option value="updated-desc">Recently changed</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="pLow"> Low stock only</label>
           </div>
-          <div class="empty-state">
-            <h2>No products yet</h2>
-            <p>Product and inventory management arrives in Phase 2.</p>
-          </div>
+          <p class="muted" id="pCount" aria-live="polite"></p>
+          <div id="pList"></div>
+          <div class="center"><button class="btn" type="button" id="pMore" hidden>Show more</button></div>
         </section>
 
         <!-- SALES HISTORY -->
@@ -186,12 +208,123 @@
     </div>
   </div>
 
+  <!-- Product dialogs -->
+  <datalist id="categoryList"></datalist>
+
+  <dialog id="productDialog" aria-labelledby="pdTitle">
+    <form id="productForm" novalidate>
+      <h2 id="pdTitle">Add product</h2>
+      <p class="muted">Fields marked * are required.</p>
+      <div id="pdError" class="alert" role="alert" hidden></div>
+      <div class="form-grid">
+        <label class="span2">Product name *
+          <input id="fName" type="text" maxlength="120" autocomplete="off">
+          <span class="err" id="e-fName"></span>
+        </label>
+        <label>SKU / product code
+          <input id="fSku" type="text" maxlength="40" autocomplete="off">
+          <span class="err" id="e-fSku"></span>
+        </label>
+        <label>Barcode (optional)
+          <input id="fBarcode" type="text" maxlength="64" autocomplete="off">
+          <span class="err" id="e-fBarcode"></span>
+        </label>
+        <label>Category
+          <input id="fCategory" type="text" list="categoryList" maxlength="40" autocomplete="off" placeholder="General">
+          <span class="err" id="e-fCategory"></span>
+        </label>
+        <label>Unit
+          <select id="fUnit"></select>
+          <span class="err" id="e-fUnit"></span>
+        </label>
+        <label>Purchase cost per unit (&#8377;) *
+          <input id="fCost" type="text" inputmode="decimal" autocomplete="off" placeholder="0 if unknown">
+          <span class="err" id="e-fCost"></span>
+        </label>
+        <label>Selling price per unit (&#8377;) *
+          <input id="fPrice" type="text" inputmode="decimal" autocomplete="off">
+          <span class="err" id="e-fPrice"></span>
+        </label>
+        <label id="gOpening">Opening stock
+          <input id="fOpening" type="text" inputmode="decimal" autocomplete="off">
+          <span class="err" id="e-fOpening"></span>
+        </label>
+        <label>Low-stock alert at or below *
+          <input id="fLow" type="text" inputmode="decimal" autocomplete="off">
+          <span class="err" id="e-fLow"></span>
+        </label>
+        <p class="note-box span2" id="stockNote" hidden></p>
+        <label class="span2">Description (optional)
+          <textarea id="fDesc" maxlength="500" rows="2"></textarea>
+          <span class="err" id="e-fDesc"></span>
+        </label>
+      </div>
+      <div class="dlg-foot">
+        <button class="btn" type="button" id="pdCancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="pdSave">Save product</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="adjustDialog" aria-labelledby="adTitle">
+    <form id="adjustForm" novalidate>
+      <h2 id="adTitle">Adjust stock</h2>
+      <p class="muted" id="adCurrent"></p>
+      <div id="adError" class="alert" role="alert" hidden></div>
+      <div class="form-grid">
+        <label>Action
+          <select id="aDir">
+            <option value="add">Add stock</option>
+            <option value="remove">Remove stock</option>
+          </select>
+        </label>
+        <label>Quantity *
+          <input id="aQty" type="text" inputmode="decimal" autocomplete="off">
+          <span class="err" id="e-aQty"></span>
+        </label>
+        <label>Reason *
+          <select id="aReason"></select>
+          <span class="err" id="e-aReason"></span>
+        </label>
+        <label>Note
+          <input id="aNote" type="text" maxlength="200" autocomplete="off">
+          <span class="err" id="e-aNote"></span>
+        </label>
+      </div>
+      <p class="muted" id="adPreview" aria-live="polite"></p>
+      <div class="dlg-foot">
+        <button class="btn" type="button" id="adCancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="adSave">Save adjustment</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detailDialog" aria-labelledby="dtTitle">
+    <div class="dlg-head">
+      <h2 id="dtTitle"></h2>
+      <button class="icon-btn" type="button" id="dtClose" aria-label="Close details"><span aria-hidden="true">&#10005;</span></button>
+    </div>
+    <p id="dtBadges"></p>
+    <dl class="kv" id="dtInfo"></dl>
+    <h3>Stock history</h3>
+    <div id="dtHistory"></div>
+    <div class="dlg-foot">
+      <button class="btn" type="button" id="dtArchive">Archive</button>
+      <button class="btn" type="button" id="dtAdjust">Adjust stock</button>
+      <button class="btn btn-primary" type="button" id="dtEdit">Edit</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
   <!-- Bottom nav (mobile) -->
   <nav class="bottom-nav" aria-label="Quick navigation">
     <ul id="bottomNav"></ul>
   </nav>
 
   <script src="demo-data.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/products.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

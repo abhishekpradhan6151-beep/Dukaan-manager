@@ -1,4 +1,4 @@
-/*
+
  * DEMO DATA ONLY.
  * These are sample numbers for the Phase 1 prototype. They are not real
  * shop records and will be deleted once IndexedDB storage is added (Phase 6).
@@ -15,8 +15,7 @@ const DEMO = {
     grossProfit: 4120
   },
   stock: {
-    totalProducts: 142,
-    lowStock: 7,
+    // Product counts are now live (see js/products.js). Only credit is still demo.
     outstandingCredit: 46780
   },
   recent: [
