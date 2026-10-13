@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14532d">
+  <title>Dukaan Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <div class="demo-banner" role="note">
+    <strong>DEMO PROTOTYPE</strong> &mdash; All figures shown are sample data. Nothing is saved yet.
+  </div>
+
+  <div class="app">
+    <!-- Sidebar (desktop) / drawer (tablet & mobile) -->
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">D</span>
+        <span class="brand-name">Dukaan Manager</span>
+      </div>
+      <nav>
+        <ul class="nav-list" id="navList"></ul>
+      </nav>
+      <p class="sidebar-note">Phase 1 &middot; Demo build</p>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <div class="content-wrap">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open navigation menu" aria-expanded="false" aria-controls="sidebar">
+          <span aria-hidden="true">&#9776;</span>
+        </button>
+        <div class="shop-title">
+          <span class="shop-name" id="shopName">Demo Kirana Store</span>
+          <span class="shop-sub">Sample shop (not real)</span>
+        </div>
+        <div class="topbar-right">
+          <span class="status-pill" id="netStatus" role="status" aria-live="polite">
+            <span class="status-icon" aria-hidden="true"></span>
+            <span class="status-text">Checking&hellip;</span>
+          </span>
+          <button class="icon-btn" id="settingsBtn" aria-label="Go to settings">
+            <span aria-hidden="true">&#9881;</span>
+          </button>
+        </div>
+      </header>
+
+      <main id="main" tabindex="-1">
+        <!-- DASHBOARD -->
+        <section class="view" id="view-dashboard" aria-labelledby="h-dashboard">
+          <div class="page-head">
+            <h1 id="h-dashboard">Dashboard</h1>
+            <label class="inline-field">
+              <span>Period</span>
+              <select id="dateFilter">
+                <option value="today" selected>Today (demo)</option>
+                <option value="week" disabled>This week (Phase 5)</option>
+                <option value="month" disabled>This month (Phase 5)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="quick-actions" aria-label="Quick actions">
+            <button class="btn btn-primary" data-go="sale">+ New Sale</button>
+            <button class="btn" data-go="products">+ Add Product</button>
+            <button class="btn" data-go="expenses">+ Add Expense</button>
+            <button class="btn" data-go="customers">Customers</button>
+          </div>
+
+          <h2 class="section-title">Money &amp; sales</h2>
+          <div class="cards" id="cardsMoney"></div>
+
+          <h2 class="section-title">Stock &amp; credit</h2>
+          <div class="cards" id="cardsStock"></div>
+
+          <div class="note-box">
+            <strong>How to read these numbers:</strong> Sales is the value of bills made. Money received is cash and UPI actually collected. Credit (udhaar) is sales not yet paid. Gross profit is an estimate before expenses &mdash; it is not net profit.
+          </div>
+
+          <h2 class="section-title">Recent transactions</h2>
+          <div id="recentWrap"></div>
+        </section>
+
+        <!-- NEW SALE -->
+        <section class="view" id="view-sale" aria-labelledby="h-sale" hidden>
+          <div class="page-head"><h1 id="h-sale">New Sale</h1></div>
+          <div class="empty-state">
+            <h2>Billing is coming in Phase 3</h2>
+            <p>Search products, build a cart, take cash, UPI, card or udhaar, and print a receipt.</p>
+          </div>
+          <div class="shell-grid">
+            <div class="panel"><h3>Product search</h3><label for="saleSearch">Search by name or SKU</label><input id="saleSearch" type="search" disabled placeholder="Available in Phase 3"></div>
+            <div class="panel"><h3>Cart</h3><p class="muted">No items. Cart will appear here.</p></div>
+          </div>
+        </section>
+
+        <!-- PRODUCTS -->
+        <section class="view" id="view-products" aria-labelledby="h-products" hidden>
+          <div class="page-head">
+            <h1 id="h-products">Products</h1>
+            <button class="btn btn-primary" disabled>+ Add Product</button>
+          </div>
+          <div class="toolbar">
+            <label class="grow"><span class="sr-only">Search products</span><input type="search" disabled placeholder="Search by name or SKU"></label>
+            <label><span class="sr-only">Category</span><select disabled><option>All categories</option></select></label>
+          </div>
+          <div class="empty-state">
+            <h2>No products yet</h2>
+            <p>Product and inventory management arrives in Phase 2.</p>
+          </div>
+        </section>
+
+        <!-- SALES HISTORY -->
+        <section class="view" id="view-sales" aria-labelledby="h-sales" hidden>
+          <div class="page-head"><h1 id="h-sales">Sales History</h1></div>
+          <div class="toolbar">
+            <label class="grow"><span class="sr-only">Search invoice or customer</span><input type="search" disabled placeholder="Invoice number or customer"></label>
+            <label><span class="sr-only">Payment method</span><select disabled><option>All payments</option></select></label>
+          </div>
+          <div class="empty-state">
+            <h2>No sales recorded</h2>
+            <p>Completed bills, reprints and returns will be listed here (Phase 3).</p>
+          </div>
+        </section>
+
+        <!-- CUSTOMERS -->
+        <section class="view" id="view-customers" aria-labelledby="h-customers" hidden>
+          <div class="page-head">
+            <h1 id="h-customers">Customers &amp; Udhaar</h1>
+            <button class="btn btn-primary" disabled>+ Add Customer</button>
+          </div>
+          <div class="empty-state">
+            <h2>No customers yet</h2>
+            <p>Customer ledgers, credit sales and repayments arrive in Phase 4.</p>
+          </div>
+        </section>
+
+        <!-- EXPENSES -->
+        <section class="view" id="view-expenses" aria-labelledby="h-expenses" hidden>
+          <div class="page-head">
+            <h1 id="h-expenses">Expenses</h1>
+            <button class="btn btn-primary" disabled>+ Add Expense</button>
+          </div>
+          <div class="empty-state">
+            <h2>No expenses recorded</h2>
+            <p>Rent, electricity, wages and more will be tracked here (Phase 5).</p>
+          </div>
+        </section>
+
+        <!-- REPORTS -->
+        <section class="view" id="view-reports" aria-labelledby="h-reports" hidden>
+          <div class="page-head"><h1 id="h-reports">Reports</h1></div>
+          <div class="empty-state">
+            <h2>Reports need real data</h2>
+            <p>Sales, profit estimates, inventory value and credit reports arrive in Phase 5.</p>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section class="view" id="view-settings" aria-labelledby="h-settings" hidden>
+          <div class="page-head"><h1 id="h-settings">Settings &amp; Backup</h1></div>
+          <div class="panel">
+            <h3>Shop details</h3>
+            <p class="muted">Editable and saved from Phase 6. Fields are locked in this demo.</p>
+            <div class="form-grid">
+              <label>Shop name<input type="text" value="Demo Kirana Store" disabled></label>
+              <label>Phone<input type="tel" disabled placeholder="Optional"></label>
+              <label class="span2">Address<input type="text" disabled placeholder="Optional"></label>
+              <label>Invoice prefix<input type="text" value="INV" disabled></label>
+              <label>Default tax<select disabled><option>Off (default)</option></select></label>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Backup &amp; restore</h3>
+            <p class="muted">A backup is a file copy of your data. It is not cloud sync. Available in Phase 6.</p>
+            <div class="quick-actions">
+              <button class="btn" disabled>Export backup (JSON)</button>
+              <button class="btn" disabled>Restore backup</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Bottom nav (mobile) -->
+  <nav class="bottom-nav" aria-label="Quick navigation">
+    <ul id="bottomNav"></ul>
+  </nav>
+
+  <script src="demo-data.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
