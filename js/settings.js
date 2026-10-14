@@ -29,7 +29,7 @@
 
   function load() {
     return DB.run(["settings"], "readonly", (tx) => DB.req(tx.objectStore("settings").get("shop")))
-      .then((rec) => { if (rec && rec.value) current = Object.assign({}, DEFAULTS, rec.value); })
+      .then((rec) => { current = Object.assign({}, DEFAULTS); if (rec && rec.value) current = Object.assign({}, DEFAULTS, rec.value); })
       .catch(() => { /* storage problems are reported by the other screens */ })
       .then(() => { fillForm(); updateHeader(); document.dispatchEvent(new CustomEvent("settings-changed")); });
   }
@@ -79,5 +79,5 @@
     load();
   });
 
-  window.DukaanSettings = { get: () => Object.assign({}, current) };
+  window.DukaanSettings = { get: () => Object.assign({}, current), reload: load };
 })();

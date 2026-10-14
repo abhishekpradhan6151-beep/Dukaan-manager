@@ -11,7 +11,7 @@
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>PROTOTYPE (Phase 5)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. There is no backup yet, so clearing browser data would delete them. Backup is not built yet.
+    <strong>PROTOTYPE (Phase 6)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. Download a backup from Settings regularly: clearing browser data deletes everything here.
   </div>
 
   <div class="app">
@@ -24,7 +24,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 5 &middot; Prototype</p>
+      <p class="sidebar-note">Phase 6 &middot; Prototype</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -384,12 +384,28 @@
               <button class="btn btn-primary" type="submit" id="stSave">Save shop details</button>
             </div>
           </form>
-          <div class="panel">
+          <div class="panel" id="backupPanel">
             <h3>Backup &amp; restore</h3>
-            <p class="muted">A backup is a file copy of your data. It is not cloud sync. Available in Phase 6.</p>
-            <div class="quick-actions">
-              <button class="btn" disabled>Export backup (JSON)</button>
-              <button class="btn" disabled>Restore backup</button>
+            <p class="muted">A backup is a file copy of all your shop data (products, stock, sales, customers, udhaar, repayments, expenses and settings). It is saved to <strong>this device only</strong>. Nothing is uploaded and there is no automatic or cloud backup.</p>
+            <ul class="muted">
+              <li>Download a backup regularly, and before restoring or clearing browser data.</li>
+              <li>Copy the file to another place you control (a pen drive, another computer, or your own cloud storage).</li>
+              <li>The file is <strong>not encrypted</strong> and contains customer names, phone numbers and business figures. Keep it private.</li>
+            </ul>
+            <div id="bkMsg" class="muted" role="status" aria-live="polite" hidden></div>
+            <div class="quick-actions"><button class="btn btn-primary" type="button" id="bkExport">Download backup (JSON)</button></div>
+            <h3 style="margin-top:1.2rem">Restore from a backup</h3>
+            <p class="muted">Restoring <strong>replaces all current data</strong> on this device with the file&rsquo;s data. It is never merged. If the restore fails, your current data is kept.</p>
+            <label>Choose a backup file
+              <input type="file" id="bkFile" accept=".json,application/json">
+            </label>
+            <div id="bkConfirmBox" hidden>
+              <div id="bkSummary" class="note-box"></div>
+              <label class="check"><input type="checkbox" id="bkAck"> I understand this will replace everything currently on this device.</label>
+              <div class="dlg-foot">
+                <button class="btn" type="button" id="bkCancel">Cancel</button>
+                <button class="btn btn-danger" type="button" id="bkRestore" disabled>Replace my data with this backup</button>
+              </div>
             </div>
           </div>
         </section>
@@ -706,6 +722,7 @@
   <script src="js/billing.js"></script>
   <script src="js/expenses.js"></script>
   <script src="js/reports.js"></script>
+  <script src="js/backup.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

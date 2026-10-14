@@ -1,4 +1,4 @@
-# Dukaan Manager (Phase 5: Expenses & Reports)
+# Dukaan Manager (Phase 6: Backup & Restore)
 
 Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and JavaScript, no build step.
 
@@ -8,6 +8,7 @@ Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and Ja
 - **Phase 3** done: billing, sales history, receipt and invoice printing, shop details for receipts.
 - **Phase 4** done: customers, udhaar ledger, repayments, linking earlier credit sales.
 - **Phase 5** done: expenses and date-filtered reports.
+- **Phase 6** done: backup export and full-replacement restore (Settings).
 - Everything shown is real data saved on this device. There is no sample data any more.
 
 ## Run it
@@ -17,6 +18,11 @@ Serve the folder (browser storage is most reliable on http://localhost):
     python3 -m http.server 8000
 
 then open http://localhost:8000. Opening `index.html` directly may work, but some browsers restrict storage for `file://` pages.
+
+## Using Phase 6 (backup and restore)
+- **Settings > Backup & restore > Download backup**: saves one JSON file (`dukaan-backup-<shop>-<date>.json`) with products, stock history, sales, customers, ledger, repayments, expenses, counters and settings, plus format version, database version and date. It is read from one consistent snapshot and does not change your data. The file is **not encrypted** and holds private customer and business data. Copy it somewhere safe; nothing is backed up automatically and there is no cloud sync.
+- **Restore**: choose a backup file. It is fully checked first (format, version, types, unique ids, links between sales, customers, ledger, repayments and products). If anything is wrong it is rejected with a plain message and nothing changes. A good file shows a summary; tick the acknowledgement and confirm to **replace all current data** (restore never merges). The replacement is one all-or-nothing database transaction, so a failure leaves your previous data intact. Success is shown only after it commits.
+- Tip: download a backup of your current data before restoring.
 
 ## Using Phase 5 (expenses and reports)
 - **Expenses**: add, edit, search, filter by date, category and status. Categories: Rent, Electricity, Salary, Transport, Supplies, Maintenance, Other. Amounts are stored as integer paise (`amountP`). Expenses are never deleted: **Void** keeps the record with a reason, and edits are logged in its history.
@@ -54,6 +60,7 @@ then open http://localhost:8000. Opening `index.html` directly may work, but som
 - `style.css` design system, layouts, receipt and print styles
 - `script.js` navigation and live dashboard
 - `js/db.js` IndexedDB helper (database version 4; upgrades older data without loss)
+- `js/backup.js` backup export, file validation, restore (Phase 6)
 - `js/expenses.js` expenses and the Expenses screen (Phase 5)
 - `js/reports.js` report calculations and screen (Phase 5)
 - `js/ledger.js` customers, ledger, repayments and rules (Phase 4)
@@ -85,11 +92,10 @@ Open the new version at the same address. The database upgrades from version 2 t
 
 ## Not implemented yet
 - Reversing a saved repayment, advance payments (paying more than owed), editing an opening balance after creation, refund records, customer deletion (archive only).
-- Backup and restore are NOT built. Customers, ledger and repayments are in IndexedDB and will be included when Phase 6 adds backup. Until then, clearing browser data deletes them.
 - Report export/printing, charts, per-product reports, recurring expenses, expense receipts/attachments.
 - The Dashboard period selector still shows today only; use Reports for week, month and custom.
 - Partial returns and refund records. Only whole-sale cancellation exists.
-- Backup/restore and data export other than product CSV (Phase 6). Until then, data exists only in this browser.
+- Automatic or scheduled backups, merging a backup into existing data, encrypted backups, cloud sync (later phases).
 - Default tax setting (tax is typed per bill), login or user permissions (anyone using the device can cancel a sale), service worker / installable app and offline start (Phase 7), cloud sync (Phase 9).
 - A bill being built is kept when you switch pages, but not if you reload (the browser warns first).
 

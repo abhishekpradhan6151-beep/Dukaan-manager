@@ -173,13 +173,16 @@
 
   /* ======================  ADD / EDIT FORM  ====================== */
 
-  const form = { id: "", editingId: "", busy: false, onSaved: null };
+  const form = { id: "", editingId: "", busy: false, onSaved: null, ack: "" };
   const FIELDS = ["fcName", "fcPhone", "fcAddress", "fcNotes", "fcOpening"];
 
   function openForm(opts) {
     opts = opts || {};
     form.onSaved = opts.onSaved || null;
     form.busy = false;
+    form.ack = "";
+    $("fcSave").textContent = "Save customer";
+    $("fcBanner").className = "alert";
     form.editingId = opts.editId || "";
     form.id = DB.uid(); // one id per opened form: sending it twice cannot create two customers
     const c = form.editingId ? L().getCustomer(form.editingId) : null;
@@ -221,14 +224,21 @@
     const bad = FIELDS.find((f) => res.errs[f]);
     if (bad) { $(bad).focus(); return; }
 
-    // Same phone as another customer: warn, but let the shopkeeper go ahead.
+    // Warnings (same phone as another customer, opening balance) are confirmed INSIDE the form with a
+    // second click on Save. They used to use window.confirm(), which is silently suppressed in embedded
+    // browsers and preview frames; that made Save do nothing at all.
+    const warns = [];
     const pk = L().phoneKey(v.phone);
-    if (pk) {
-      const dup = L().customers().find((c) => c.phoneKey === pk && c.id !== form.editingId);
-      if (dup && !window.confirm("A customer with this phone number already exists: " + dup.name + ".\n\nSave this one anyway?")) return;
-    }
-    if (isNew && res.vals.openingP > 0) {
-      if (!window.confirm("Add an opening balance of " + U.money2(res.vals.openingP / 100) + " owed by " + v.name + "?\n\nIt cannot be edited later; a mistake needs a correcting entry.")) return;
+    const dup = pk ? L().customers().find((c) => c.phoneKey === pk && c.id !== form.editingId) : null;
+    if (dup) warns.push("A customer with this phone number already exists: " + dup.name + ".");
+    if (isNew && res.vals.openingP > 0) warns.push("An opening balance of " + U.money2(res.vals.openingP / 100) + " will be added as money " + v.name + " owes you. It cannot be edited later.");
+    const sig = JSON.stringify([warns, v]);
+    if (warns.length && form.ack !== sig) {
+      form.ack = sig;
+      $("fcBanner").className = "note-box";
+      errorBox($("fcBanner"), warns.join(" ") + " Press the button again to save anyway, or change the details.");
+      $("fcSave").textContent = "Confirm and save";
+      return;
     }
 
     form.busy = true;
@@ -242,6 +252,7 @@
       U.toast(isNew ? "Customer saved: " + c.name : "Customer updated");
       if (form.onSaved) form.onSaved(c);
     } catch (err) {
+      $("fcBanner").className = "alert";
       errorBox($("fcBanner"), err.message || "Could not save the customer.");
       $("fcSave").disabled = false;
     } finally {
