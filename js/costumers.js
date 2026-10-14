@@ -1,13 +1,8 @@
 /*
- * customers.js - Phase 4: Customer Management & Udhaar Ledger.
- *
- * Provides:
- *   1. Customer CRUD (Add, Edit, Search, Archive/Restore)
- *   2. Derivation of balances from immutable, auditable ledger records
- *   3. Outstanding credit bills tracking and multi-bill repayment allocation
- *   4. Safe, atomic repayment recording inside ONE transaction with aggregate allocation validation
- *   5. Full ledger view with date & type filtering and running balances
- *   6. Repayment receipt printing & preview
+ * customers.js - Phase 4: the Customers & Udhaar screens.
+ * Screens only. All money rules (balances, repayments, linking) live in js/ledger.js and run inside
+ * database transactions there. Nothing here edits a balance; it only asks the ledger to record events.
+ * Every piece of user-typed text is put on the page with textContent (via U.el), never as HTML.
  */
 (function () {
   "use strict";
@@ -16,1286 +11,769 @@
   const U = window.DukaanUtil;
   const $ = U.$;
   const el = U.el;
+  const L = () => window.DukaanLedger;
+  const fmt = (n) => (Number.isInteger(n) ? U.money(n) : U.money2(n));
 
-  // In-memory cache for fast UI updates
-  let customersCache = [];
-  let ledgerCache = [];
-  let repaymentsCache = [];
-  let allocationsCache = [];
-  let status = "loading"; // loading | ready | failed
-  let lastError = "";
+  const TYPE_LABELS = {
+    "opening": "Opening balance",
+    "credit-sale": "Credit sale",
+    "repayment": "Repayment received",
+    "sale-cancel": "Sale cancelled (credit removed)"
+  };
 
-  let currentCustomerId = null;
-  let ledgerFilter = { from: "", to: "", type: "" };
-  let customerListSearch = "";
-  let customerListFilter = "all"; // all | active | due | archived
+  const ui = { selectedId: "", showAll: false };
+  const RECENT = 15;
 
-  function fail(message, code, extra) {
-    const e = new Error(message);
-    if (code) e.code = code;
-    if (extra) Object.assign(e, extra);
-    return e;
+  /* ---------- small helpers ---------- */
+
+  function errorBox(box, msg) { box.textContent = msg || ""; box.hidden = !msg; }
+
+  function ready() {
+    const lg = L();
+    return lg && lg.status() === "ready";
   }
 
-  /* ---------- Data Layer ---------- */
+  function openDialog(d) { if (!d.open) d.showModal(); }
 
-  async function loadAllData() {
-    return DB.run(["customers", "customerLedger", "repayments", "repaymentAllocations"], "readonly", async (tx) => {
-      const custs = await DB.req(tx.objectStore("customers").getAll());
-      const ledger = await DB.req(tx.objectStore("customerLedger").getAll());
-      const reps = await DB.req(tx.objectStore("repayments").getAll());
-      const allocs = await DB.req(tx.objectStore("repaymentAllocations").getAll());
-      return { custs, ledger, reps, allocs };
-    });
+  function btn(label, cls, onClick, aria) {
+    const b = el("button", "btn" + (cls ? " " + cls : ""), label);
+    b.type = "button";
+    if (aria) b.setAttribute("aria-label", aria);
+    if (onClick) b.addEventListener("click", onClick);
+    return b;
   }
 
-  async function refresh() {
-    try {
-      const d = await loadAllData();
-      customersCache = (d.custs || []).sort((a, b) => a.name.localeCompare(b.name));
-      ledgerCache = (d.ledger || []).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-      repaymentsCache = (d.reps || []).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-      allocationsCache = d.allocs || [];
-      status = "ready";
-      lastError = "";
-    } catch (e) {
-      status = "failed";
-      lastError = e.message;
-    }
-    document.dispatchEvent(new CustomEvent("customers-changed"));
+  function goCustomer(id) { window.location.hash = "#customers/" + encodeURIComponent(id); }
+
+  /* ======================  LIST  ====================== */
+
+  function listRows() {
+    const q = $("cuSearch").value.trim().toLowerCase();
+    const qd = q.replace(/\D/g, "");
+    const st = $("cuStatus").value;
+    const owing = $("cuOwing").value;
+    let rows = L().customers().map((c) => ({ c: c, bal: L().balance(c.id) }));
+    if (st !== "all") rows = rows.filter((r) => r.c.status === st);
+    if (q) rows = rows.filter((r) => r.c.name.toLowerCase().includes(q) || (qd && String(r.c.phone || "").replace(/\D/g, "").includes(qd)));
+    if (owing === "owing") rows = rows.filter((r) => r.bal > 0);
+    if (owing === "clear") rows = rows.filter((r) => r.bal <= 0);
+    const sort = $("cuSort").value;
+    if (sort === "balance") rows.sort((a, b) => b.bal - a.bal || a.c.name.localeCompare(b.c.name));
+    else if (sort === "recent") rows.sort((a, b) => (a.c.createdAt < b.c.createdAt ? 1 : -1));
+    else rows.sort((a, b) => a.c.name.localeCompare(b.c.name));
+    return rows;
   }
 
-  function getCustomer(id) {
-    return customersCache.find((c) => c.id === id) || null;
-  }
-
-  function listCustomers() {
-    return customersCache.slice();
-  }
-
-  function findCustomerByPhone(phone, excludeId) {
-    const p = String(phone || "").trim();
-    if (!p) return null;
-    return customersCache.find((c) => c.phone && c.phone.trim() === p && c.id !== excludeId) || null;
-  }
-
-  // Calculate ledger with running balances for a customer
-  function getCustomerLedger(customerId) {
-    const entries = ledgerCache.filter((e) => e.customerId === customerId);
-    entries.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-
-    let balanceP = 0;
-    return entries.map((entry) => {
-      const debitP = Math.round((entry.debit || 0) * 100);
-      const creditP = Math.round((entry.credit || 0) * 100);
-      balanceP += debitP - creditP;
-      return Object.assign({}, entry, {
-        runningBalance: balanceP / 100,
-        runningBalanceP: balanceP
-      });
-    });
-  }
-
-  // Total outstanding balance calculated purely from ledger entries
-  function getCustomerBalance(customerId) {
-    const entries = ledgerCache.filter((e) => e.customerId === customerId);
-    let balP = 0;
-    entries.forEach((e) => {
-      balP += Math.round((e.debit || 0) * 100) - Math.round((e.credit || 0) * 100);
-    });
-    return U.round(balP / 100, 2);
-  }
-
-  // Sum of outstanding balances across all customers (including archived customers)
-  function totalCreditOutstanding() {
-    const allCustIds = new Set(customersCache.map((c) => c.id));
-    let totalP = 0;
-    ledgerCache.forEach((e) => {
-      if (allCustIds.has(e.customerId)) {
-        totalP += Math.round((e.debit || 0) * 100) - Math.round((e.credit || 0) * 100);
-      }
-    });
-    return Math.max(0, U.round(totalP / 100, 2));
-  }
-
-  // Get outstanding completed sales for a customer eligible for repayment
-  function getCustomerOutstandingBills(customerId) {
-    const sales = window.DukaanSales ? window.DukaanSales.cached() : [];
-    const customerSales = sales.filter((s) => s.customerId === customerId && s.status === "completed" && (s.outstanding || 0) > 0);
-
-    const bills = [];
-    customerSales.forEach((sale) => {
-      const saleInitialCreditP = Math.round(sale.outstanding * 100);
-      const activeAllocs = allocationsCache.filter((a) => a.saleId === sale.id && a.status !== "reversed");
-      let allocatedP = 0;
-      activeAllocs.forEach((a) => { allocatedP += Math.round(a.amount * 100); });
-      const remainingDueP = Math.max(0, saleInitialCreditP - allocatedP);
-      if (remainingDueP > 0) {
-        bills.push({
-          saleId: sale.id,
-          invoiceNo: sale.invoiceNo,
-          createdAt: sale.createdAt,
-          total: sale.total,
-          originalCredit: sale.outstanding,
-          alreadyRepaid: allocatedP / 100,
-          remainingDue: remainingDueP / 100,
-          remainingDueP: remainingDueP
-        });
-      }
-    });
-
-    // Oldest bills first
-    return bills.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-  }
-
-  // Auto-allocate repayment across outstanding bills (oldest first)
-  function autoAllocate(bills, amount) {
-    let unallocatedP = Math.round(amount * 100);
-    const result = [];
-
-    for (const b of bills) {
-      if (unallocatedP <= 0) {
-        result.push({ saleId: b.saleId, invoiceNo: b.invoiceNo, remainingDue: b.remainingDue, amount: 0 });
-        continue;
-      }
-      const canTakeP = Math.min(unallocatedP, b.remainingDueP);
-      result.push({
-        saleId: b.saleId,
-        invoiceNo: b.invoiceNo,
-        remainingDue: b.remainingDue,
-        amount: canTakeP / 100
-      });
-      unallocatedP -= canTakeP;
-    }
-
-    return { allocations: result, unallocated: unallocatedP / 100 };
-  }
-
-  /* ---------- Customer CRUD Operations ---------- */
-
-  async function saveCustomer(input) {
-    const name = String(input.name || "").trim().slice(0, 80);
-    const phone = String(input.phone || "").trim().slice(0, 20);
-    const address = String(input.address || "").trim().slice(0, 200);
-    const notes = String(input.notes || "").trim().slice(0, 500);
-
-    if (name.length < 2) throw fail("Customer name must be at least 2 characters.");
-
-    const isEdit = Boolean(input.id);
-    const at = DB.now();
-
-    return DB.run(["customers"], "readwrite", async (tx) => {
-      const store = tx.objectStore("customers");
-      let customer;
-      if (isEdit) {
-        customer = await DB.req(store.get(input.id));
-        if (!customer) throw fail("Customer not found.");
-        customer.name = name;
-        customer.phone = phone;
-        customer.address = address;
-        customer.notes = notes;
-        customer.updatedAt = at;
-        store.put(customer);
-      } else {
-        customer = {
-          id: DB.uid(),
-          name: name,
-          phone: phone,
-          address: address,
-          notes: notes,
-          createdAt: at,
-          updatedAt: at,
-          status: "active"
-        };
-        store.add(customer);
-      }
-      return customer;
-    });
-  }
-
-  async function toggleArchive(customerId, archive) {
-    return DB.run(["customers"], "readwrite", async (tx) => {
-      const store = tx.objectStore("customers");
-      const c = await DB.req(store.get(customerId));
-      if (!c) throw fail("Customer not found.");
-      c.status = archive ? "archived" : "active";
-      c.updatedAt = DB.now();
-      store.put(c);
-      return c;
-    });
-  }
-
-  /* ---------- Repayment Recording (Atomic & Idempotent) ---------- */
-
-  async function recordRepayment(input) {
-    const customerId = input.customerId;
-    const amount = Number(input.amount);
-    const method = input.method;
-    const note = String(input.note || "").trim().slice(0, 200);
-    const customAllocations = input.allocations || [];
-
-    if (!U.METHODS[method]) throw fail("Please choose a valid payment method.");
-    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
-      throw fail("Enter a repayment amount above 0 with at most 2 decimals.");
-    }
-    const amountP = Math.round(amount * 100);
-
-    return DB.run(["customers", "customerLedger", "repayments", "repaymentAllocations", "counters", "sales"], "readwrite", async (tx) => {
-      const custStore = tx.objectStore("customers");
-      const ledgerStore = tx.objectStore("customerLedger");
-      const repStore = tx.objectStore("repayments");
-      const allocStore = tx.objectStore("repaymentAllocations");
-      const salesStore = tx.objectStore("sales");
-      const counters = tx.objectStore("counters");
-
-      const customer = await DB.req(custStore.get(customerId));
-      if (!customer) throw fail("Customer not found.");
-
-      // Calculate live balance from ledger records inside this transaction
-      let currentBalP = 0;
-      const ledgerIndex = ledgerStore.index("customerId");
-      const existingLedger = await DB.req(ledgerIndex.getAll(customerId));
-      existingLedger.forEach((e) => {
-        currentBalP += Math.round((e.debit || 0) * 100) - Math.round((e.credit || 0) * 100);
-      });
-
-      if (amountP > currentBalP) {
-        throw fail("Repayment amount (" + U.money2(amount) + ") exceeds the customer's total outstanding balance (" + U.money2(currentBalP / 100) + "). Advance payments are not supported.");
-      }
-
-      // Re-verify outstanding bills and allocations inside transaction
-      const salesIndex = salesStore.index("customerId");
-      const custSales = await DB.req(salesIndex.getAll(customerId));
-      const completedCreditSales = custSales.filter((s) => s.status === "completed" && (s.outstanding || 0) > 0);
-
-      // Map saleId to remaining due
-      const billRemainingMap = new Map();
-      for (const s of completedCreditSales) {
-        const saleCreditP = Math.round(s.outstanding * 100);
-        const allocIndex = allocStore.index("saleId");
-        const sAllocs = await DB.req(allocIndex.getAll(s.id));
-        let repaidP = 0;
-        sAllocs.forEach((a) => {
-          if (a.status !== "reversed") repaidP += Math.round(a.amount * 100);
-        });
-        const dueP = Math.max(0, saleCreditP - repaidP);
-        if (dueP > 0) billRemainingMap.set(s.id, { sale: s, dueP: dueP });
-      }
-
-      if (!customAllocations || !customAllocations.length) {
-        throw fail("Repayment must have at least one bill allocation.");
-      }
-
-      // Validate each allocation entry and aggregate by saleId to prevent duplicate over-allocations
-      let totalAllocatedP = 0;
-      const aggregatedBySale = new Map();
-
-      for (const a of customAllocations) {
-        if (!a || typeof a !== "object" || !a.saleId) {
-          throw fail("Invalid allocation: missing sale ID.");
-        }
-        const aAmt = Number(a.amount);
-        if (!Number.isFinite(aAmt) || aAmt < 0 || Math.abs(aAmt * 100 - Math.round(aAmt * 100)) > 1e-6) {
-          throw fail("Allocation amount must be a positive number with at most 2 decimals.");
-        }
-        const aAmtP = Math.round(aAmt * 100);
-        if (aAmtP === 0) continue; // skip zero allocations
-
-        // Verify sale existence and ownership
-        const sale = await DB.req(salesStore.get(a.saleId));
-        if (!sale) throw fail("Sale " + a.saleId + " does not exist.");
-        if (sale.customerId !== customerId) {
-          throw fail("Bill " + (sale.invoiceNo || a.saleId) + " does not belong to this customer.");
-        }
-        if (sale.status !== "completed") {
-          throw fail("Bill " + sale.invoiceNo + " is not an active completed sale.");
-        }
-
-        const billInfo = billRemainingMap.get(a.saleId);
-        if (!billInfo || billInfo.dueP <= 0) {
-          throw fail("Bill " + sale.invoiceNo + " has no remaining credit due.");
-        }
-
-        const cur = aggregatedBySale.get(a.saleId) || { sale: sale, dueP: billInfo.dueP, totalAllocP: 0 };
-        cur.totalAllocP += aAmtP;
-
-        // Check if aggregated allocations for this bill exceed its remaining due
-        if (cur.totalAllocP > cur.dueP) {
-          throw fail("Allocated amount (" + U.money2(cur.totalAllocP / 100) + ") exceeds remaining balance (" + U.money2(cur.dueP / 100) + ") for bill " + sale.invoiceNo + ".");
-        }
-
-        aggregatedBySale.set(a.saleId, cur);
-        totalAllocatedP += aAmtP;
-      }
-
-      // Verify total allocations vs repayment amount exactly in paise
-      if (totalAllocatedP > amountP) {
-        throw fail("Total bill allocations (" + U.money2(totalAllocatedP / 100) + ") exceed the repayment amount (" + U.money2(amount) + ").");
-      }
-      if (totalAllocatedP < amountP) {
-        throw fail("Total bill allocations (" + U.money2(totalAllocatedP / 100) + ") are less than the repayment amount (" + U.money2(amount) + ").");
-      }
-
-      const validAllocations = [];
-      for (const [sId, info] of aggregatedBySale.entries()) {
-        validAllocations.push({
-          saleId: sId,
-          invoiceNo: info.sale.invoiceNo,
-          amount: info.totalAllocP / 100
-        });
-      }
-
-      // All validations passed! Now generate counter, records, and commit
-      const counter = (await DB.req(counters.get("repayment"))) || { name: "repayment", value: 0 };
-      counter.value += 1;
-      counters.put(counter);
-      const receiptNo = "RCP-" + String(counter.value).padStart(6, "0");
-
-      const at = DB.now();
-      const repaymentId = DB.uid();
-
-      // 1. Create Repayment record
-      const repayment = {
-        id: repaymentId,
-        receiptNo: receiptNo,
-        customerId: customerId,
-        customerName: customer.name,
-        amount: amount,
-        method: method,
-        note: note,
-        createdAt: at,
-        allocations: validAllocations
-      };
-      repStore.add(repayment);
-
-      // 2. Create Repayment Allocation records
-      for (const val of validAllocations) {
-        allocStore.add({
-          id: DB.uid(),
-          repaymentId: repaymentId,
-          saleId: val.saleId,
-          invoiceNo: val.invoiceNo,
-          customerId: customerId,
-          amount: val.amount,
-          createdAt: at,
-          status: "active"
-        });
-      }
-
-      // 3. Create Ledger entry (Credit to customer account)
-      const billRefStr = validAllocations.map((a) => a.invoiceNo).join(", ");
-      const ledgerEntry = {
-        id: DB.uid(),
-        customerId: customerId,
-        type: "repayment",
-        saleId: validAllocations.length === 1 ? validAllocations[0].saleId : null,
-        invoiceNo: validAllocations.length === 1 ? validAllocations[0].invoiceNo : null,
-        repaymentId: repaymentId,
-        debit: 0,
-        credit: amount,
-        amount: amount,
-        paymentMethod: method,
-        createdAt: at,
-        note: "Repayment " + receiptNo + (billRefStr ? " (for " + billRefStr + ")" : "") + (note ? " · " + note : ""),
-        referenceId: repaymentId
-      };
-      ledgerStore.add(ledgerEntry);
-
-      // 4. Update customer timestamp
-      customer.updatedAt = at;
-      custStore.put(customer);
-
-      const remainingBalP = currentBalP - amountP;
-      return {
-        repayment: repayment,
-        customer: customer,
-        remainingBalance: remainingBalP / 100
-      };
-    });
-  }
-
-  /* ---------- UI Controller & Views ---------- */
-
-  function renderCustomerStats() {
-    const activeCount = customersCache.filter((c) => c.status === "active").length;
-    const archivedCount = customersCache.filter((c) => c.status === "archived").length;
-    let dueCount = 0;
-    const totalDue = totalCreditOutstanding();
-
-    customersCache.forEach((c) => {
-      const b = getCustomerBalance(c.id);
-      if (b > 0) {
-        dueCount++;
-      }
-    });
-
-    const wrap = $("custStatsCards");
-    if (!wrap) return;
-    wrap.replaceChildren(
-      el("div", "card", ""),
-      el("div", "card accent-gold", ""),
-      el("div", "card accent-teal", "")
-    );
-    wrap.children[0].append(
-      el("div", "card-label", "Active Customers"),
-      el("div", "card-value", String(activeCount)),
-      el("div", "card-hint", archivedCount > 0 ? archivedCount + " archived" : "In your contact book")
-    );
-    wrap.children[1].append(
-      el("div", "card-label", "Total Credit Due"),
-      el("div", "card-value", U.money(totalDue)),
-      el("div", "card-hint", dueCount + " customers with balance (incl. archived)")
-    );
-    wrap.children[2].append(
-      el("div", "card-label", "With Outstanding"),
-      el("div", "card-value", String(dueCount)),
-      el("div", "card-hint", "Pending Udhaar")
-    );
-  }
-
-  function getFilteredCustomers() {
-    const q = customerListSearch.trim().toLowerCase();
-    return customersCache.filter((c) => {
-      if (customerListFilter === "active" && c.status !== "active") return false;
-      if (customerListFilter === "archived" && c.status !== "archived") return false;
-      const bal = getCustomerBalance(c.id);
-      if (customerListFilter === "due" && !(bal > 0)) return false;
-      if (q) {
-        const matchesName = c.name.toLowerCase().includes(q);
-        const matchesPhone = (c.phone || "").toLowerCase().includes(q);
-        if (!matchesName && !matchesPhone) return false;
-      }
-      return true;
-    });
-  }
-
-  function renderCustomerList() {
-    const wrap = $("custListWrap");
-    if (!wrap) return;
+  function renderCards() {
+    const wrap = $("cuCards");
     wrap.replaceChildren();
+    const lg = L();
+    const active = lg.customers().filter((c) => c.status === "active").length;
+    const card = (label, value, hint, accent) => {
+      const c = el("div", "card" + (accent ? " accent-" + accent : ""));
+      c.append(el("div", "card-label", label), el("div", "card-value", value), el("div", "card-hint", hint));
+      return c;
+    };
+    wrap.append(
+      card("Total outstanding", fmt(lg.totalOutstanding()), "From the ledger. Cancelled bills are not counted.", "gold"),
+      card("Customers owing", String(lg.owingCount()), "With a balance above zero", "warn"),
+      card("Repaid today", fmt(lg.repaymentsToday()), "Payments recorded today", "teal"),
+      card("Active customers", String(active), "On this device")
+    );
+  }
 
-    renderCustomerStats();
+  function renderLinkNotice() {
+    const box = $("cuLinkNotice");
+    box.replaceChildren();
+    const list = ready() ? L().unlinked() : [];
+    if (!list.length) { box.hidden = true; return; }
+    const total = list.reduce((a, s) => a + s.outstanding, 0);
+    box.hidden = false;
+    box.append(el("strong", "", list.length + (list.length === 1 ? " earlier credit sale is" : " earlier credit sales are") + " not linked to a customer ("
+      + U.money2(total) + "). "),
+    document.createTextNode("They were made before customer records existed, so they are not in any ledger yet. "));
+    const b = btn("Link them to customers", "btn-sm btn-primary", openLink);
+    b.id = "cuLink";
+    box.append(b);
+  }
 
-    if (status === "failed") {
-      wrap.append(el("p", "alert", lastError + " Customers are unavailable."));
-      return;
-    }
-    if (status !== "ready") {
-      wrap.append(el("p", "muted", "Loading customers…"));
-      return;
-    }
+  function renderList() {
+    const wrap = $("cuList");
+    wrap.replaceChildren();
+    const failed = !L() || L().status() === "failed";
+    errorBox($("cuError"), failed ? "Customer records could not be loaded. " + (L() ? L().error() : "") : "");
+    if (failed) { $("cuCards").replaceChildren(); $("cuCount").textContent = ""; return; }
+    if (!ready()) { wrap.append(el("p", "muted", "Loading…")); return; }
+    renderCards();
+    renderLinkNotice();
 
-    if (!customersCache.length) {
+    const all = L().customers();
+    const rows = listRows();
+    $("cuCount").textContent = rows.length + (rows.length === 1 ? " customer" : " customers");
+    if (!all.length) {
       const e = el("div", "empty-state");
-      e.append(
-        el("h2", "", "No customers yet"),
-        el("p", "", "Add customers to track credit sales, udhaar ledgers, and repayments.")
-      );
-      const b = el("button", "btn btn-primary", "+ Add your first customer");
-      b.type = "button";
+      e.append(el("h2", "", "No customers yet"), el("p", "", "Add a customer to give credit (udhaar) and track repayments."));
+      const b = btn("+ Add your first customer", "btn-primary", () => openForm({}));
       b.style.marginTop = ".8rem";
-      b.addEventListener("click", () => openCustomerDialog());
       e.append(b);
       wrap.append(e);
       return;
     }
+    if (!rows.length) { wrap.append(el("p", "muted", "No customer matches these filters.")); return; }
 
-    const list = getFilteredCustomers();
-    $("custListCount").textContent = list.length + (list.length === 1 ? " customer" : " customers") + " shown (of " + customersCache.length + " total)";
-
-    if (!list.length) {
-      const e = el("div", "empty-state");
-      e.append(el("h2", "", "No customers match"), el("p", "", "Try a different search term or filter."));
-      wrap.append(e);
-      return;
-    }
-
-    // Table view (tablet/desktop)
     const tw = el("div", "table-wrap");
     const table = el("table");
-    table.append(el("caption", "sr-only", "Customer list"));
-    const thead = el("thead"), hr = el("tr");
-    ["Customer Name", "Phone", "Outstanding Udhaar", "Status", "Actions"].forEach((h, i) => {
-      const th = el("th", i === 2 ? "num" : "", h);
-      th.scope = "col";
-      hr.append(th);
-    });
-    thead.append(hr);
-
+    table.append(el("caption", "sr-only", "Customers"));
+    const hr = el("tr");
+    ["Name", "Phone", "Status", "Balance owed", "Actions"].forEach((h, i) => { const th = el("th", i === 3 ? "num" : "", h); th.scope = "col"; hr.append(th); });
+    const thead = el("thead"); thead.append(hr);
     const tbody = el("tbody");
     const cards = el("div", "tx-list");
-
-    list.forEach((c) => {
-      const bal = getCustomerBalance(c.id);
-      const isArchived = c.status === "archived";
-
-      // Table row
+    rows.forEach((r) => {
+      const c = r.c;
+      const act = el("div", "p-actions");
+      act.append(btn("Open", "btn-sm", () => goCustomer(c.id), "Open " + c.name));
+      if (r.bal > 0) act.append(btn("Receive payment", "btn-sm btn-primary", () => openRepay(c.id), "Receive payment from " + c.name));
+      const badge = c.status === "archived" ? el("span", "badge muted", "Archived") : el("span", "badge", "Active");
       const tr = el("tr");
-      const nameTd = el("td");
-      nameTd.append(el("strong", "", c.name));
-
-      const phoneTd = el("td", "", c.phone || "–");
-
-      const balTd = el("td", "num");
-      if (bal > 0) {
-        balTd.append(el("span", "sum-due", U.money2(bal)));
-      } else {
-        balTd.textContent = "₹0.00";
-      }
-
-      const statusTd = el("td");
-      statusTd.append(el("span", "badge" + (isArchived ? " muted" : (bal > 0 ? " credit" : "")), isArchived ? "Archived" : (bal > 0 ? "Credit Due" : "Clear")));
-
-      const actTd = el("td");
-      const actWrap = el("div", "p-actions");
-      const viewBtn = el("button", "btn btn-sm", "Profile & Ledger");
-      viewBtn.type = "button";
-      viewBtn.addEventListener("click", () => showCustomerDetail(c.id));
-      actWrap.append(viewBtn);
-
-      if (bal > 0) {
-        const payBtn = el("button", "btn btn-sm btn-primary", "Repay");
-        payBtn.type = "button";
-        payBtn.addEventListener("click", () => openRepaymentDialog(c.id));
-        actWrap.append(payBtn);
-      }
-      actTd.append(actWrap);
-
-      tr.append(nameTd, phoneTd, balTd, statusTd, actTd);
+      const stTd = el("td"); stTd.append(badge);
+      const actTd = el("td"); actTd.append(act);
+      tr.append(el("td", "", c.name), el("td", "", c.phone || "–"), stTd, el("td", "num" + (r.bal > 0 ? " due" : ""), U.money2(r.bal)), actTd);
       tbody.append(tr);
 
-      // Mobile Card
-      const card = el("div", "p-card");
-      const top = el("div", "p-card-top");
+      const item = el("div", "tx-item");
       const left = el("div");
-      left.append(el("strong", "", c.name));
-      if (c.phone) left.append(el("div", "card-hint", "📞 " + c.phone));
+      left.append(el("strong", "", c.name), el("div", "card-hint", c.phone || "No phone"));
+      if (c.status === "archived") left.append(el("span", "badge muted", "Archived"));
+      const act2 = el("div", "p-actions");
+      act2.style.marginTop = ".4rem";
+      act2.append(btn("Open", "btn-sm", () => goCustomer(c.id), "Open " + c.name));
+      if (r.bal > 0) act2.append(btn("Receive payment", "btn-sm btn-primary", () => openRepay(c.id), "Receive payment from " + c.name));
+      left.append(act2);
       const right = el("div");
       right.style.textAlign = "right";
-      right.append(el("strong", bal > 0 ? "sum-due" : "", U.money2(bal)));
-      const bw = el("div");
-      bw.append(el("span", "badge" + (isArchived ? " muted" : (bal > 0 ? " credit" : "")), isArchived ? "Archived" : (bal > 0 ? "Due" : "Clear")));
-      right.append(bw);
-      top.append(left, right);
-
-      const bot = el("div", "p-actions");
-      bot.style.marginTop = ".6rem";
-      const cardViewBtn = el("button", "btn btn-sm", "View Details");
-      cardViewBtn.type = "button";
-      cardViewBtn.addEventListener("click", () => showCustomerDetail(c.id));
-      bot.append(cardViewBtn);
-
-      if (bal > 0) {
-        const cardPayBtn = el("button", "btn btn-sm btn-primary", "Record Repayment");
-        cardPayBtn.type = "button";
-        cardPayBtn.addEventListener("click", () => openRepaymentDialog(c.id));
-        bot.append(cardPayBtn);
-      }
-      card.append(top, bot);
-      cards.append(card);
+      right.append(el("strong", r.bal > 0 ? "due" : "", U.money2(r.bal)), el("div", "card-hint", r.bal > 0 ? "owed" : "clear"));
+      item.append(left, right);
+      cards.append(item);
     });
-
     table.append(thead, tbody);
     tw.append(table);
     wrap.append(tw, cards);
   }
 
-  /* ---------- Customer Detail & Ledger View ---------- */
-
-  function showCustomerDetail(customerId) {
-    const c = getCustomer(customerId);
-    if (!c) {
-      U.toast("Customer not found.");
-      return;
-    }
-    currentCustomerId = customerId;
-
-    $("custListView").hidden = true;
-    $("custDetailView").hidden = false;
-
-    renderCustomerProfile(c);
+  function exportCustomers() {
+    if (!ready()) return;
+    const rows = [["Name", "Phone", "Address", "Status", "Balance owed (INR)", "Bills owed", "Added on", "Notes"]];
+    L().customers().sort((a, b) => a.name.localeCompare(b.name)).forEach((c) => {
+      const s = L().summary(c.id);
+      rows.push([c.name, c.phone, c.address, c.status, s.balance.toFixed(2), s.owingBills, U.dateTime(c.createdAt), c.notes]);
+    });
+    U.downloadCsv("customers.csv", rows);
   }
 
-  function hideCustomerDetail() {
-    currentCustomerId = null;
-    $("custDetailView").hidden = true;
-    $("custListView").hidden = false;
-    renderCustomerList();
-  }
+  /* ======================  ADD / EDIT FORM  ====================== */
 
-  function renderCustomerProfile(customer) {
-    $("cdName").textContent = customer.name;
-    const phoneWrap = $("cdPhoneWrap");
-    if (customer.phone) {
-      $("cdPhone").textContent = customer.phone;
-      phoneWrap.hidden = false;
+  const form = { id: "", editingId: "", busy: false, onSaved: null };
+  const FIELDS = ["fcName", "fcPhone", "fcAddress", "fcNotes", "fcOpening"];
+
+  function openForm(opts) {
+    opts = opts || {};
+    form.onSaved = opts.onSaved || null;
+    form.busy = false;
+    form.editingId = opts.editId || "";
+    form.id = DB.uid(); // one id per opened form: sending it twice cannot create two customers
+    const c = form.editingId ? L().getCustomer(form.editingId) : null;
+    FIELDS.forEach((f) => { $(f).value = ""; $(f).removeAttribute("aria-invalid"); $("e-" + f).textContent = ""; });
+    errorBox($("fcBanner"), "");
+    if (c) {
+      $("fcTitle").textContent = "Edit customer";
+      $("fcName").value = c.name; $("fcPhone").value = c.phone || ""; $("fcAddress").value = c.address || ""; $("fcNotes").value = c.notes || "";
+      $("gcOpening").hidden = true;
+      $("fcHint").textContent = "The balance comes from the ledger and cannot be typed over here. Changing contact details does not change old bills.";
     } else {
-      phoneWrap.hidden = true;
+      $("fcTitle").textContent = "Add customer";
+      $("fcName").value = opts.name || "";
+      $("gcOpening").hidden = false;
+      $("fcHint").textContent = "The opening balance is money the customer already owed you before you started using this app. It can only be entered now, when the customer is added.";
     }
-
-    const addrWrap = $("cdAddressWrap");
-    if (customer.address) {
-      $("cdAddress").textContent = customer.address;
-      addrWrap.hidden = false;
-    } else {
-      addrWrap.hidden = true;
-    }
-
-    const notesWrap = $("cdNotesWrap");
-    if (customer.notes) {
-      $("cdNotes").textContent = customer.notes;
-      notesWrap.hidden = false;
-    } else {
-      notesWrap.hidden = true;
-    }
-
-    const isArchived = customer.status === "archived";
-    const badge = $("cdStatusBadge");
-    badge.className = "badge" + (isArchived ? " muted" : "");
-    badge.textContent = isArchived ? "Archived Customer" : "Active Customer";
-
-    $("cdArchiveBtn").textContent = isArchived ? "Restore Customer" : "Archive Customer";
-
-    const balance = getCustomerBalance(customer.id);
-    $("cdBalance").textContent = U.money2(balance);
-    $("cdBalance").className = "card-value" + (balance > 0 ? " sum-due" : "");
-
-    const outstandingBills = getCustomerOutstandingBills(customer.id);
-    $("cdBillsCount").textContent = String(outstandingBills.length);
-
-    $("cdRepayBtn").disabled = balance <= 0;
-
-    renderOutstandingBillsSection(outstandingBills);
-    renderLedgerTable(customer.id);
+    $("fcSave").disabled = false;
+    openDialog($("custDialog"));
+    $("fcName").focus();
   }
 
-  function renderOutstandingBillsSection(bills) {
-    const wrap = $("cdBillsWrap");
-    wrap.replaceChildren();
-
-    if (!bills.length) {
-      wrap.append(el("p", "muted", "No outstanding bills for this customer. All invoices are fully paid."));
-      return;
-    }
-
-    const tw = el("div", "table-wrap");
-    const table = el("table");
-    const thead = el("thead"), hr = el("tr");
-    ["Invoice", "Date", "Bill Total", "Paid", "Due", "Action"].forEach((h, i) => {
-      const th = el("th", i >= 2 && i <= 4 ? "num" : "", h);
-      hr.append(th);
-    });
-    thead.append(hr);
-
-    const tbody = el("tbody");
-    bills.forEach((b) => {
-      const tr = el("tr");
-      const invTd = el("td");
-      invTd.append(el("strong", "", b.invoiceNo));
-
-      const dtTd = el("td", "", U.dateTime(b.createdAt));
-      const totTd = el("td", "num", U.money2(b.total));
-      const paidTd = el("td", "num", U.money2(b.alreadyRepaid + (b.total - b.originalCredit)));
-      const dueTd = el("td", "num sum-due", U.money2(b.remainingDue));
-
-      const actTd = el("td");
-      const payThisBtn = el("button", "btn btn-sm btn-primary", "Pay this bill");
-      payThisBtn.type = "button";
-      payThisBtn.addEventListener("click", () => openRepaymentDialog(currentCustomerId, b.saleId));
-      actTd.append(payThisBtn);
-
-      tr.append(invTd, dtTd, totTd, paidTd, dueTd, actTd);
-      tbody.append(tr);
-    });
-
-    table.append(thead, tbody);
-    tw.append(table);
-    wrap.append(tw);
-  }
-
-  function renderLedgerTable(customerId) {
-    const wrap = $("cdLedgerWrap");
-    wrap.replaceChildren();
-
-    const fullLedger = getCustomerLedger(customerId);
-
-    // Apply ledger filters
-    const from = $("cdLFrom").value;
-    const to = $("cdLTo").value;
-    const type = $("cdLType").value;
-
-    const filtered = fullLedger.filter((entry) => {
-      const dKey = U.dateKey(entry.createdAt);
-      if (from && dKey < from) return false;
-      if (to && dKey > to) return false;
-      if (type && entry.type !== type) return false;
-      return true;
-    });
-
-    if (!fullLedger.length) {
-      const e = el("div", "empty-state");
-      e.append(el("h3", "", "No ledger entries yet"), el("p", "", "Transactions and credit sales will appear in this ledger."));
-      wrap.append(e);
-      return;
-    }
-
-    if (!filtered.length) {
-      wrap.append(el("p", "muted", "No ledger entries match the selected date or type filters."));
-      return;
-    }
-
-    const tw = el("div", "table-wrap");
-    const table = el("table");
-    const thead = el("thead"), hr = el("tr");
-    ["Date & Time", "Reference", "Description", "Debit (+)", "Credit (−)", "Balance"].forEach((h, i) => {
-      const th = el("th", i >= 3 ? "num" : "", h);
-      hr.append(th);
-    });
-    thead.append(hr);
-
-    const tbody = el("tbody");
-    filtered.slice().reverse().forEach((entry) => {
-      const tr = el("tr");
-
-      const dtTd = el("td", "", U.dateTime(entry.createdAt));
-
-      const refTd = el("td");
-      if (entry.invoiceNo) {
-        const link = el("button", "btn btn-sm", entry.invoiceNo);
-        link.type = "button";
-        link.addEventListener("click", () => {
-          if (window.DukaanHistory && entry.saleId) window.DukaanHistory.showSale(entry.saleId);
-        });
-        refTd.append(link);
-      } else if (entry.repaymentId) {
-        const rep = repaymentsCache.find((r) => r.id === entry.repaymentId);
-        refTd.textContent = rep ? rep.receiptNo : "Repayment";
-      } else {
-        refTd.textContent = "–";
-      }
-
-      const descTd = el("td", "", entry.note || entry.type);
-
-      const debTd = el("td", "num");
-      debTd.textContent = entry.debit > 0 ? U.money2(entry.debit) : "–";
-
-      const credTd = el("td", "num");
-      credTd.textContent = entry.credit > 0 ? U.money2(entry.credit) : "–";
-
-      const balTd = el("td", "num");
-      balTd.append(el("strong", entry.runningBalance > 0 ? "sum-due" : "", U.money2(entry.runningBalance)));
-
-      tr.append(dtTd, refTd, descTd, debTd, credTd, balTd);
-      tbody.append(tr);
-    });
-
-    table.append(thead, tbody);
-    tw.append(table);
-    wrap.append(tw);
-  }
-
-  /* ---------- Add / Edit Customer Dialog ---------- */
-
-  let editCustomerId = null;
-  let saveCustomerBusy = false;
-
-  function openCustomerDialog(customerId, prefillData) {
-    editCustomerId = customerId || null;
-    const form = $("customerForm");
-    form.reset();
-    $("custError").hidden = true;
-    $("custWarn").hidden = true;
-    $("e-custName").textContent = "";
-    $("e-custPhone").textContent = "";
-
-    if (editCustomerId) {
-      const c = getCustomer(editCustomerId);
-      if (!c) return;
-      $("custDlgTitle").textContent = "Edit Customer";
-      $("custName").value = c.name;
-      $("custPhone").value = c.phone || "";
-      $("custAddress").value = c.address || "";
-      $("custNotes").value = c.notes || "";
-    } else {
-      $("custDlgTitle").textContent = "Add Customer";
-      if (prefillData) {
-        if (prefillData.name) $("custName").value = prefillData.name;
-        if (prefillData.phone) $("custPhone").value = prefillData.phone;
-      }
-    }
-
-    $("customerDialog").showModal();
-    $("custName").focus();
-  }
-
-  async function onCustomerFormSubmit(e) {
+  async function onFormSubmit(e) {
     e.preventDefault();
-    if (saveCustomerBusy) return;
+    if (form.busy) return;
+    const isNew = !form.editingId;
+    const v = {
+      name: $("fcName").value.trim().replace(/\s+/g, " "),
+      phone: $("fcPhone").value.trim(),
+      address: $("fcAddress").value.trim(),
+      notes: $("fcNotes").value.trim(),
+      opening: isNew ? $("fcOpening").value.trim() : ""
+    };
+    const res = L().validateCustomer(v, isNew);
+    FIELDS.forEach((f) => {
+      const m = res.errs[f] || "";
+      $("e-" + f).textContent = m;
+      if (m) $(f).setAttribute("aria-invalid", "true"); else $(f).removeAttribute("aria-invalid");
+    });
+    const bad = FIELDS.find((f) => res.errs[f]);
+    if (bad) { $(bad).focus(); return; }
 
-    const name = $("custName").value.trim();
-    const phone = $("custPhone").value.trim();
-    const address = $("custAddress").value.trim();
-    const notes = $("custNotes").value.trim();
+    // Same phone as another customer: warn, but let the shopkeeper go ahead.
+    const pk = L().phoneKey(v.phone);
+    if (pk) {
+      const dup = L().customers().find((c) => c.phoneKey === pk && c.id !== form.editingId);
+      if (dup && !window.confirm("A customer with this phone number already exists: " + dup.name + ".\n\nSave this one anyway?")) return;
+    }
+    if (isNew && res.vals.openingP > 0) {
+      if (!window.confirm("Add an opening balance of " + U.money2(res.vals.openingP / 100) + " owed by " + v.name + "?\n\nIt cannot be edited later; a mistake needs a correcting entry.")) return;
+    }
 
-    $("e-custName").textContent = "";
-    $("e-custPhone").textContent = "";
-    $("custError").hidden = true;
+    form.busy = true;
+    $("fcSave").disabled = true;
+    try {
+      let c;
+      if (isNew) c = await L().createCustomer({ id: form.id, name: v.name, phone: v.phone, address: v.address, notes: v.notes, openingP: res.vals.openingP });
+      else c = await L().updateCustomer(form.editingId, v);
+      await L().refresh(); // the database has committed; now the screens follow
+      $("custDialog").close();
+      U.toast(isNew ? "Customer saved: " + c.name : "Customer updated");
+      if (form.onSaved) form.onSaved(c);
+    } catch (err) {
+      errorBox($("fcBanner"), err.message || "Could not save the customer.");
+      $("fcSave").disabled = false;
+    } finally {
+      form.busy = false;
+    }
+  }
 
-    if (name.length < 2) {
-      $("e-custName").textContent = "Customer name must be at least 2 characters.";
-      $("custName").focus();
+  /* ======================  DETAIL  ====================== */
+
+  function current() { return ui.selectedId ? L().getCustomer(ui.selectedId) : null; }
+
+  function renderDetail() {
+    const c = current();
+    if (!c) return;
+    const lg = L();
+    const s = lg.summary(c.id);
+    $("cdName").textContent = c.name;
+    const badges = $("cdBadges");
+    badges.replaceChildren(c.status === "archived" ? el("span", "badge muted", "Archived") : el("span", "badge", "Active"));
+    const kv = $("cdContact");
+    kv.replaceChildren();
+    [["Phone", c.phone || "–"], ["Address", c.address || "–"], ["Notes", c.notes || "–"], ["Added", U.dateTime(c.createdAt)], ["Last changed", U.dateTime(c.updatedAt)]]
+      .forEach((p) => kv.append(el("dt", "", p[0]), el("dd", "", p[1])));
+
+    $("cdRepay").disabled = !(s.balance > 0);
+    $("cdArchive").textContent = c.status === "archived" ? "Restore customer" : "Archive customer";
+
+    const cards = $("cdCards");
+    cards.replaceChildren();
+    const card = (label, value, hint, accent) => {
+      const d = el("div", "card" + (accent ? " accent-" + accent : ""));
+      d.append(el("div", "card-label", label), el("div", "card-value", value), el("div", "card-hint", hint));
+      return d;
+    };
+    cards.append(
+      card("Outstanding balance", fmt(s.balance), "Total of this customer’s ledger", s.balance > 0 ? "gold" : "teal"),
+      card("Bills still owed", String(s.owingBills), "Including any opening balance"),
+      card("Total repaid", fmt(s.repaid), "Money received against credit", "teal")
+    );
+
+    renderBills(c);
+    renderRepayments(c);
+    renderLedger(c);
+  }
+
+  function renderBills(c) {
+    const wrap = $("cdBills");
+    wrap.replaceChildren();
+    const items = L().itemsFor(c.id);
+    if (!items.length) { wrap.append(el("p", "muted", "Nothing is owed. There are no outstanding bills.")); return; }
+    const tw = el("div", "table-wrap always");
+    const table = el("table");
+    table.append(el("caption", "sr-only", "Outstanding bills"));
+    const hr = el("tr");
+    ["Bill", "Date", "Credit given", "Repaid", "Still owed", "Actions"].forEach((h, i) => { const th = el("th", i >= 2 && i <= 4 ? "num" : "", h); th.scope = "col"; hr.append(th); });
+    const thead = el("thead"); thead.append(hr);
+    const tbody = el("tbody");
+    items.forEach((it) => {
+      const tr = el("tr");
+      const label = it.kind === "opening" ? "Opening balance" : it.invoiceNo;
+      const act = el("div", "p-actions");
+      act.append(btn("Receive payment", "btn-sm btn-primary", () => openRepay(c.id, it.refKey), "Receive payment for " + label));
+      if (it.kind === "sale") act.append(btn("View bill", "btn-sm", () => window.DukaanHistory.showSale(it.saleId), "View bill " + label));
+      const td = el("td"); td.append(act);
+      tr.append(el("td", "", label), el("td", "", U.dateTime(it.createdAt)), el("td", "num", U.money2(it.creditP / 100)),
+        el("td", "num", U.money2(it.repaidP / 100)), el("td", "num due", U.money2(it.outP / 100)), td);
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    tw.append(table);
+    wrap.append(tw);
+  }
+
+  function renderRepayments(c) {
+    const wrap = $("cdReps");
+    wrap.replaceChildren();
+    const reps = L().repaymentsFor(c.id);
+    if (!reps.length) { wrap.append(el("p", "muted", "No payments received yet.")); return; }
+    const tw = el("div", "table-wrap always");
+    const table = el("table");
+    table.append(el("caption", "sr-only", "Repayments"));
+    const hr = el("tr");
+    ["Reference", "Date", "Method", "Applied to", "Amount", ""].forEach((h, i) => { const th = el("th", i === 4 ? "num" : "", h); th.scope = "col"; hr.append(th); });
+    const thead = el("thead"); thead.append(hr);
+    const tbody = el("tbody");
+    reps.forEach((r) => {
+      const tr = el("tr");
+      const td = el("td"); td.append(btn("Slip", "btn-sm", () => showRepaymentReceipt(r), "Open payment slip " + r.refNo));
+      tr.append(el("td", "", r.refNo), el("td", "", U.dateTime(r.createdAt)), el("td", "", U.METHODS[r.method] || r.method),
+        el("td", "", r.allocations.map((a) => (a.kind === "opening" ? "Opening balance" : a.invoiceNo)).join(", ")),
+        el("td", "num", U.money2(r.amount)), td);
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    tw.append(table);
+    wrap.append(tw);
+  }
+
+  function describe(e) {
+    const base = TYPE_LABELS[e.type] || e.type;
+    const parts = [base];
+    if (e.method) parts.push(U.METHODS[e.method] || e.method);
+    if (e.notes) parts.push(e.notes);
+    return parts.join(" · ");
+  }
+
+  // Filtered ledger rows, newest first, each with its running balance (computed over the full ledger).
+  function ledgerView(c) {
+    const type = $("cdType").value;
+    const from = $("cdFrom").value;
+    const to = $("cdTo").value;
+    let rows = L().ledgerRows(c.id);
+    if (type) rows = rows.filter((r) => r.type === type);
+    if (from) rows = rows.filter((r) => r.dateKey >= from);
+    if (to) rows = rows.filter((r) => r.dateKey <= to);
+    return rows.reverse();
+  }
+
+  function renderLedger(c) {
+    const wrap = $("cdLedger");
+    wrap.replaceChildren();
+    const rows = ledgerView(c);
+    const filtered = $("cdType").value || $("cdFrom").value || $("cdTo").value;
+    if (!rows.length) {
+      wrap.append(el("p", "muted", filtered ? "No ledger entries match these filters." : "No ledger entries yet. Credit sales and repayments will appear here."));
+      $("cdMore").hidden = true;
       return;
     }
+    const shown = ui.showAll ? rows : rows.slice(0, RECENT);
+    const tw = el("div", "table-wrap always");
+    const table = el("table", "ledger");
+    table.append(el("caption", "sr-only", "Ledger"));
+    const hr = el("tr");
+    ["Date and time", "Reference", "Description", "Debit (owed more)", "Credit (paid / removed)", "Running balance"].forEach((h, i) => {
+      const th = el("th", i >= 3 ? "num" : "", h); th.scope = "col"; hr.append(th);
+    });
+    const thead = el("thead"); thead.append(hr);
+    const tbody = el("tbody");
+    shown.forEach((e) => {
+      const tr = el("tr");
+      const ref = e.invoiceNo || (e.type === "opening" ? "Opening" : e.repaymentId ? repRef(e.repaymentId) : "");
+      tr.append(el("td", "", U.dateTime(e.createdAt)), el("td", "", ref), el("td", "", describe(e)),
+        el("td", "num debit", e.amount > 0 ? U.money2(e.amount) : ""),
+        el("td", "num credit", e.amount < 0 ? U.money2(-e.amount) : ""),
+        el("td", "num", U.money2(e.balanceAfter)));
+      tbody.append(tr);
+    });
+    table.append(thead, tbody);
+    tw.append(table);
+    wrap.append(tw);
+    const more = $("cdMore");
+    more.hidden = ui.showAll || rows.length <= RECENT;
+    more.textContent = "Show full ledger (" + rows.length + " entries)";
+  }
 
-    // Phone duplicate warning check
-    if (phone) {
-      const existing = findCustomerByPhone(phone, editCustomerId);
-      if (existing && !e.target.dataset.warnBypassed) {
-        const warnBox = $("custWarn");
-        warnBox.replaceChildren();
-        warnBox.append(
-          el("strong", "", "Duplicate Phone Warning: "),
-          el("span", "", "Another customer “" + existing.name + "” already has the phone number " + phone + ". Tap Save again to proceed anyway.")
-        );
-        warnBox.hidden = false;
-        e.target.dataset.warnBypassed = "true";
-        return;
-      }
+  function repRef(id) { const r = L().repaymentById(id); return r ? r.refNo : ""; }
+
+  function exportLedger() {
+    const c = current();
+    if (!c) return;
+    const rows = [["Date and time", "Type", "Reference", "Description", "Debit (INR)", "Credit (INR)", "Running balance (INR)", "Method"]];
+    ledgerView(c).reverse().forEach((e) => {
+      rows.push([U.dateTime(e.createdAt), TYPE_LABELS[e.type] || e.type, e.invoiceNo || (e.repaymentId ? repRef(e.repaymentId) : ""), e.notes,
+        e.amount > 0 ? e.amount.toFixed(2) : "", e.amount < 0 ? (-e.amount).toFixed(2) : "", e.balanceAfter.toFixed(2), e.method]);
+    });
+    U.downloadCsv("ledger-" + c.name.replace(/[^A-Za-z0-9]+/g, "-").slice(0, 30) + ".csv", rows);
+  }
+
+  async function toggleArchive() {
+    const c = current();
+    if (!c) return;
+    const archiving = c.status !== "archived";
+    const bal = L().balance(c.id);
+    let msg;
+    if (archiving) {
+      msg = "Archive " + c.name + "?\n\nTheir bills and ledger stay exactly as they are. They will no longer appear when you pick a customer for a new bill.";
+      if (bal > 0) msg += "\n\nWARNING: they still owe " + U.money2(bal) + ". You can still record their repayments after archiving.";
+    } else {
+      msg = "Restore " + c.name + " so they can be used on new bills again?";
     }
-
-    saveCustomerBusy = true;
-    const saveBtn = $("custSaveBtn");
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Saving…";
-
+    if (!window.confirm(msg)) return;
     try {
-      const saved = await saveCustomer({
-        id: editCustomerId,
-        name: name,
-        phone: phone,
-        address: address,
-        notes: notes
+      await L().setCustomerStatus(c.id, archiving ? "archived" : "active");
+      await L().refresh();
+      U.toast(archiving ? "Customer archived" : "Customer restored");
+    } catch (err) {
+      U.toast("Could not change the customer: " + err.message);
+    }
+  }
+
+  /* ======================  REPAYMENT  ====================== */
+
+  const rp = { id: "", customerId: "", items: [], mode: "auto", alloc: {}, busy: false, pending: null };
+
+  function openRepay(customerId, preRef) {
+    const c = L().getCustomer(customerId);
+    if (!c) return;
+    const items = L().itemsFor(customerId);
+    if (!items.length) { U.toast(c.name + " owes nothing."); return; }
+    rp.id = DB.uid(); // one id per opened form: the same repayment can never be saved twice
+    rp.customerId = customerId;
+    rp.items = items;
+    rp.busy = false;
+    rp.pending = null;
+    rp.alloc = {};
+    rp.mode = preRef ? "manual" : "auto";
+    if (preRef) { const it = items.find((x) => x.refKey === preRef); if (it) rp.alloc[preRef] = (it.outP / 100).toFixed(2); }
+    const sel = $("rpMethod");
+    sel.replaceChildren();
+    Object.keys(U.METHODS).forEach((k) => sel.append(new Option(U.METHODS[k], k)));
+    $("rpRef").value = ""; $("rpNote").value = "";
+    $("rpAmount").value = preRef && rp.alloc[preRef] ? rp.alloc[preRef] : "";
+    document.querySelectorAll('input[name="rpMode"]').forEach((r) => { r.checked = r.value === rp.mode; });
+    $("rpWho").textContent = c.name + " owes " + U.money2(L().balance(customerId)) + " in total.";
+    errorBox($("rpError"), "");
+    $("e-rpAmount").textContent = "";
+    showStage(1);
+    renderAlloc();
+    openDialog($("rpDialog"));
+    $("rpAmount").focus();
+  }
+
+  function showStage(n) {
+    $("rpStage1").hidden = n !== 1;
+    $("rpStage2").hidden = n !== 2;
+    $("rpNext").hidden = n !== 1;
+    $("rpBack").hidden = n !== 2;
+    $("rpConfirm").hidden = n !== 2;
+    $("rpConfirm").disabled = false;
+  }
+
+  function itemLabel(it) { return it.kind === "opening" ? "Opening balance" : it.invoiceNo; }
+
+  function manualSumP() {
+    return Object.keys(rp.alloc).reduce((a, k) => {
+      const n = U.parseMoney(rp.alloc[k]);
+      return a + (Number.isNaN(n) ? 0 : Math.round(n * 100));
+    }, 0);
+  }
+
+  function renderAlloc() {
+    const wrap = $("rpAlloc");
+    wrap.replaceChildren();
+    const manual = rp.mode === "manual";
+    $("rpAmount").disabled = manual;
+    if (!manual) {
+      const n = U.parseMoney($("rpAmount").value);
+      if (!Number.isNaN(n) && n > 0) {
+        let left = Math.round(n * 100);
+        const lines = [];
+        rp.items.forEach((it) => { if (left <= 0) return; const p = Math.min(left, it.outP); lines.push(itemLabel(it) + ": " + U.money2(p / 100)); left -= p; });
+        if (lines.length && left <= 0) wrap.append(el("p", "card-hint", "Will be applied to: " + lines.join(", ")));
+      }
+      return;
+    }
+    wrap.append(el("p", "card-hint", "Enter how much goes to each bill. Leave a bill empty to skip it."));
+    rp.items.forEach((it) => {
+      const row = el("div", "alloc-row");
+      const left = el("div");
+      left.append(el("strong", "", itemLabel(it)), el("div", "card-hint", "Owed " + U.money2(it.outP / 100) + " · " + U.dateTime(it.createdAt)));
+      const lab = el("label");
+      lab.append(el("span", "sr-only", "Amount for " + itemLabel(it)));
+      const inp = el("input"); inp.type = "text"; inp.inputMode = "decimal"; inp.autocomplete = "off"; inp.placeholder = "0";
+      inp.value = rp.alloc[it.refKey] || ""; inp.dataset.ref = it.refKey;
+      lab.append(inp);
+      const full = btn("Full", "btn-sm", () => { rp.alloc[it.refKey] = (it.outP / 100).toFixed(2); syncManualAmount(); renderAlloc(); }, "Pay full amount of " + itemLabel(it));
+      row.append(left, lab, full);
+      wrap.append(row);
+    });
+    const tot = el("div", "sum-row sum-total");
+    tot.append(el("span", "", "Total received"), el("span", "", U.money2(manualSumP() / 100)));
+    tot.id = "rpManualTotal";
+    wrap.append(tot);
+  }
+
+  function syncManualAmount() {
+    const p = manualSumP();
+    $("rpAmount").value = p > 0 ? (p / 100).toFixed(2) : "";
+  }
+
+  // Reads stage 1. Returns { err } or { amount, allocations|null }.
+  function readRepay() {
+    const totalP = rp.items.reduce((a, it) => a + it.outP, 0);
+    if (rp.mode === "manual") {
+      const list = [];
+      for (const it of rp.items) {
+        const raw = String(rp.alloc[it.refKey] || "").trim();
+        if (raw === "") continue;
+        const n = U.parseMoney(raw);
+        if (Number.isNaN(n) || n <= 0) return { err: "Amount for " + itemLabel(it) + " must be above 0, such as 250 or 99.50." };
+        if (Math.round(n * 100) > it.outP) return { err: "Only " + U.money2(it.outP / 100) + " is owed on " + itemLabel(it) + "." };
+        list.push({ refKey: it.refKey, amount: n, label: itemLabel(it) });
+      }
+      if (!list.length) return { err: "Enter an amount for at least one bill." };
+      const sumP = list.reduce((a, x) => a + Math.round(x.amount * 100), 0);
+      return { amount: sumP / 100, allocations: list };
+    }
+    const n = U.parseMoney($("rpAmount").value);
+    if (Number.isNaN(n) || n <= 0) return { err: "Enter the amount received, such as 500 or 250.50." };
+    if (Math.round(n * 100) > totalP) return { err: "This customer owes only " + U.money2(totalP / 100) + ". A payment cannot be more than what is owed." };
+    return { amount: n, allocations: null };
+  }
+
+  function onRepayNext(e) {
+    e.preventDefault();
+    if (!$("rpStage2").hidden) return;
+    $("e-rpAmount").textContent = "";
+    const r = readRepay();
+    if (r.err) { errorBox($("rpError"), r.err); return; }
+    errorBox($("rpError"), "");
+    // Work out the allocation lines shown on the review screen (the database recalculates them on save).
+    let lines = [];
+    if (r.allocations) lines = r.allocations.map((a) => ({ label: a.label, amount: a.amount }));
+    else {
+      let left = Math.round(r.amount * 100);
+      rp.items.forEach((it) => { if (left <= 0) return; const p = Math.min(left, it.outP); lines.push({ label: itemLabel(it), amount: p / 100 }); left -= p; });
+    }
+    const c = L().getCustomer(rp.customerId);
+    const balBeforeP = Math.round(L().balance(rp.customerId) * 100);
+    rp.pending = { amount: r.amount, allocations: r.allocations };
+    const box = $("rpReview");
+    box.replaceChildren();
+    const row = (a, b, cls) => { const d = el("div", "sum-row" + (cls ? " " + cls : "")); d.append(el("span", "", a), el("span", "", b)); return d; };
+    box.append(row("Customer", c.name), row("Method", U.METHODS[$("rpMethod").value]));
+    if ($("rpRef").value.trim()) box.append(row("Payment reference", $("rpRef").value.trim()));
+    lines.forEach((l) => box.append(row("Applied to " + l.label, U.money2(l.amount))));
+    box.append(row("Amount received", U.money2(r.amount), "sum-total"));
+    box.append(row("Balance after saving", U.money2((balBeforeP - Math.round(r.amount * 100)) / 100)));
+    box.append(el("p", "card-hint", "This records money you received. It is not a sale and does not change stock or sales totals. It cannot be reversed in this version."));
+    showStage(2);
+  }
+
+  async function onRepayConfirm() {
+    if (rp.busy || !rp.pending) return;
+    rp.busy = true;
+    $("rpConfirm").disabled = true;
+    errorBox($("rpError"), "");
+    try {
+      const rep = await L().recordRepayment({
+        id: rp.id, customerId: rp.customerId, method: $("rpMethod").value, amount: rp.pending.amount,
+        reference: $("rpRef").value, note: $("rpNote").value,
+        allocations: rp.pending.allocations ? rp.pending.allocations.map((a) => ({ refKey: a.refKey, amount: a.amount })) : null
       });
-
-      $("customerDialog").close();
-      delete e.target.dataset.warnBypassed;
-      await refresh();
-      U.toast(editCustomerId ? "Customer updated: " + saved.name : "Customer added: " + saved.name);
-
-      if (currentCustomerId === saved.id) {
-        renderCustomerProfile(saved);
-      }
-
-      document.dispatchEvent(new CustomEvent("customer-quick-added", { detail: { customer: saved } }));
+      await L().refresh(); // committed first, then the screens follow
+      $("rpDialog").close();
+      U.toast("Payment saved: " + rep.refNo);
+      showRepaymentReceipt(rep);
     } catch (err) {
-      $("custError").textContent = err.message;
-      $("custError").hidden = false;
+      if (err.code === "DUPLICATE" && err.repayment) {
+        await L().refresh();
+        $("rpDialog").close();
+        U.toast("That payment was already saved. It was not saved twice.");
+        showRepaymentReceipt(err.repayment);
+      } else {
+        // The ledger may have changed since the form opened: reload and let the user review again.
+        await L().refresh();
+        rp.items = L().itemsFor(rp.customerId);
+        rp.alloc = {};
+        errorBox($("rpError"), err.message || "The payment could not be saved.");
+        showStage(1);
+        renderAlloc();
+      }
     } finally {
-      saveCustomerBusy = false;
-      saveBtn.disabled = false;
-      saveBtn.textContent = "Save Customer";
+      rp.busy = false;
+      $("rpConfirm").disabled = false;
     }
   }
 
-  /* ---------- Record Repayment Dialog & Confirmation ---------- */
+  /* ======================  REPAYMENT SLIP  ====================== */
 
-  let repayCustomerId = null;
-  let repayBusy = false;
-  let repaymentPendingData = null;
-
-  function openRepaymentDialog(customerId, specificSaleId) {
-    const c = getCustomer(customerId);
-    if (!c) {
-      U.toast("Customer not found.");
-      return;
-    }
-    repayCustomerId = customerId;
-    repayBusy = false;
-    repaymentPendingData = null;
-
-    $("repayForm").reset();
-    $("repayError").hidden = true;
-    $("repayConfirmBox").hidden = true;
-    $("repayInputSection").hidden = false;
-    $("repaySubmitBtn").textContent = "Review Repayment";
-
-    $("repayTitle").textContent = "Record Repayment – " + c.name;
-    const bal = getCustomerBalance(c.id);
-    $("repayCustomerBal").textContent = U.money2(bal);
-
-    const bills = getCustomerOutstandingBills(c.id);
-    renderRepaymentBillsTable(bills, specificSaleId);
-
-    if (specificSaleId) {
-      const targetBill = bills.find((b) => b.saleId === specificSaleId);
-      if (targetBill) {
-        $("repayAmount").value = targetBill.remainingDue.toFixed(2);
-        updateBillAllocationsFromTotal(targetBill.remainingDue);
-      }
-    }
-
-    $("repaymentDialog").showModal();
-    $("repayAmount").focus();
+  let slipRep = null;
+  function showRepaymentReceipt(rep) {
+    slipRep = rep;
+    $("rrPreview").replaceChildren(window.DukaanReceipt.buildRepayment(rep));
+    openDialog($("rrDialog"));
   }
 
-  function renderRepaymentBillsTable(bills, preselectedSaleId) {
-    const tbody = $("repayBillsBody");
-    tbody.replaceChildren();
+  /* ======================  LINK EARLIER CREDIT SALES  ====================== */
 
-    if (!bills.length) {
-      const tr = el("tr");
-      const td = el("td");
-      td.colSpan = 5;
-      td.textContent = "No outstanding bills.";
-      tr.append(td);
-      tbody.append(tr);
-      return;
-    }
+  let linkGroups = [];
 
-    bills.forEach((b) => {
-      const tr = el("tr");
-      tr.dataset.saleId = b.saleId;
-      tr.dataset.remainingP = b.remainingDueP;
-
-      const invTd = el("td");
-      invTd.append(el("strong", "", b.invoiceNo));
-
-      const dtTd = el("td", "", U.dateTime(b.createdAt));
-      const totTd = el("td", "num", U.money2(b.total));
-      const dueTd = el("td", "num sum-due", U.money2(b.remainingDue));
-
-      const allocTd = el("td", "num");
-      const input = el("input", "alloc-input");
-      input.type = "text";
-      input.inputMode = "decimal";
-      input.dataset.saleId = b.saleId;
-      input.dataset.invoiceNo = b.invoiceNo;
-      input.dataset.maxP = b.remainingDueP;
-      input.placeholder = "0.00";
-      input.style.width = "6.5rem";
-      input.style.textAlign = "right";
-
-      if (preselectedSaleId === b.saleId) {
-        input.value = b.remainingDue.toFixed(2);
-      }
-
-      input.addEventListener("input", onManualAllocationChange);
-      allocTd.append(input);
-
-      tr.append(invTd, dtTd, totTd, dueTd, allocTd);
-      tbody.append(tr);
+  function openLink() {
+    const list = L().unlinked();
+    if (!list.length) { U.toast("There is nothing to link."); return; }
+    const map = new Map();
+    list.forEach((s) => {
+      const name = String(s.customerName || "").trim();
+      const key = name.toLowerCase();
+      if (!map.has(key)) map.set(key, { name: name, phone: "", sales: [] });
+      const g = map.get(key);
+      if (!g.phone && s.customerPhone) g.phone = s.customerPhone;
+      g.sales.push(s);
     });
-
-    updateAllocationSummary();
-  }
-
-  function onManualAllocationChange() {
-    let sumAllocP = 0;
-    const inputs = $("repayBillsBody").querySelectorAll(".alloc-input");
-    inputs.forEach((inp) => {
-      const v = U.parseMoney(inp.value);
-      if (Number.isFinite(v) && v > 0) sumAllocP += Math.round(v * 100);
+    linkGroups = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const wrap = $("lkGroups");
+    wrap.replaceChildren();
+    const customers = L().customers().filter((c) => c.status === "active").sort((a, b) => a.name.localeCompare(b.name));
+    linkGroups.forEach((g, i) => {
+      const box = el("div", "link-group");
+      const total = g.sales.reduce((a, s) => a + s.outstanding, 0);
+      box.append(el("strong", "", g.name || "No name recorded"),
+        el("div", "card-hint", g.sales.length + (g.sales.length === 1 ? " bill" : " bills") + " · " + U.money2(total) + " unpaid · " + g.sales.map((s) => s.invoiceNo).join(", ")));
+      const lab = el("label");
+      lab.append(el("span", "sr-only", "Customer for " + (g.name || "unnamed bills")));
+      const sel = el("select"); sel.dataset.idx = i;
+      sel.append(new Option("Create a new customer“" + (g.name || "Unnamed customer") + "”", "new"));
+      customers.forEach((c) => sel.append(new Option("Use existing: " + c.name + (c.phone ? " (" + c.phone + ")" : ""), c.id)));
+      sel.append(new Option("Skip for now", "skip"));
+      const match = customers.find((c) => c.nameKey === g.name.toLowerCase());
+      if (match) sel.value = match.id;
+      lab.append(sel);
+      box.append(lab);
+      wrap.append(box);
     });
-    if (!$("repayAmount").value || document.activeElement !== $("repayAmount")) {
-      $("repayAmount").value = sumAllocP > 0 ? (sumAllocP / 100).toFixed(2) : "";
-    }
-    updateAllocationSummary();
+    errorBox($("lkError"), "");
+    $("lkSave").disabled = false;
+    openDialog($("lkDialog"));
   }
 
-  function updateBillAllocationsFromTotal(totalAmt) {
-    const bills = getCustomerOutstandingBills(repayCustomerId);
-    const { allocations } = autoAllocate(bills, totalAmt);
-
-    const inputs = $("repayBillsBody").querySelectorAll(".alloc-input");
-    inputs.forEach((inp) => {
-      const match = allocations.find((a) => a.saleId === inp.dataset.saleId);
-      inp.value = match && match.amount > 0 ? match.amount.toFixed(2) : "";
-    });
-
-    updateAllocationSummary();
-  }
-
-  function updateAllocationSummary() {
-    let sumAllocP = 0;
-    const inputs = $("repayBillsBody").querySelectorAll(".alloc-input");
-    inputs.forEach((inp) => {
-      const v = U.parseMoney(inp.value);
-      if (Number.isFinite(v) && v > 0) sumAllocP += Math.round(v * 100);
-    });
-    $("repayAllocSum").textContent = U.money2(sumAllocP / 100);
-  }
-
-  async function onRepaymentFormSubmit(e) {
+  async function onLinkSubmit(e) {
     e.preventDefault();
-    if (repayBusy) return;
-
-    // Phase 1: Review / Confirmation Step
-    if (!repaymentPendingData) {
-      const amt = U.parseMoney($("repayAmount").value);
-      if (Number.isNaN(amt) || amt <= 0) {
-        $("repayError").textContent = "Please enter a repayment amount above 0.";
-        $("repayError").hidden = false;
-        return;
-      }
-
-      const bal = getCustomerBalance(repayCustomerId);
-      if (amt > bal) {
-        $("repayError").textContent = "Repayment amount (" + U.money2(amt) + ") cannot exceed total balance (" + U.money2(bal) + ").";
-        $("repayError").hidden = false;
-        return;
-      }
-
-      // Read allocations
-      const allocations = [];
-      let totalAllocP = 0;
-      const inputs = $("repayBillsBody").querySelectorAll(".alloc-input");
-      for (const inp of inputs) {
-        const val = inp.value.trim() ? U.parseMoney(inp.value) : 0;
-        if (Number.isNaN(val) || val < 0) {
-          $("repayError").textContent = "Invalid amount entered for bill " + inp.dataset.invoiceNo;
-          $("repayError").hidden = false;
-          return;
-        }
-        const valP = Math.round(val * 100);
-        const maxP = Number(inp.dataset.maxP);
-        if (valP > maxP) {
-          $("repayError").textContent = "Allocated amount for " + inp.dataset.invoiceNo + " cannot exceed remaining due (" + U.money2(maxP / 100) + ").";
-          $("repayError").hidden = false;
-          return;
-        }
-        if (valP > 0) {
-          totalAllocP += valP;
-          allocations.push({
-            saleId: inp.dataset.saleId,
-            invoiceNo: inp.dataset.invoiceNo,
-            amount: valP / 100
-          });
-        }
-      }
-
-      const amtP = Math.round(amt * 100);
-      if (totalAllocP !== amtP) {
-        $("repayError").textContent = "The sum of bill allocations (" + U.money2(totalAllocP / 100) + ") must match total repayment (" + U.money2(amt) + "). Tap 'Auto-allocate' to distribute automatically.";
-        $("repayError").hidden = false;
-        return;
-      }
-
-      $("repayError").hidden = true;
-
-      // Show Confirmation Step
-      repaymentPendingData = {
-        customerId: repayCustomerId,
-        amount: amt,
-        method: $("repayMethod").value,
-        note: $("repayNote").value.trim(),
-        allocations: allocations
-      };
-
-      const c = getCustomer(repayCustomerId);
-      const confBox = $("repayConfirmBox");
-      confBox.replaceChildren();
-
-      const dl = el("dl", "kv");
-      dl.append(
-        el("dt", "", "Customer"), el("dd", "", c.name),
-        el("dt", "", "Repayment Amount"), el("dd", "sum-due", U.money2(amt)),
-        el("dt", "", "Payment Method"), el("dd", "", U.METHODS[repaymentPendingData.method] || repaymentPendingData.method),
-        el("dt", "", "Allocated Across"), el("dd", "", allocations.map((a) => a.invoiceNo + " (" + U.money2(a.amount) + ")").join(", ")),
-        el("dt", "", "Remaining Udhaar"), el("dd", "", U.money2(bal - amt))
-      );
-      confBox.append(el("strong", "", "Please verify the repayment details:"), dl);
-      confBox.hidden = false;
-
-      $("repayInputSection").hidden = true;
-      $("repaySubmitBtn").textContent = "Confirm & Save Repayment";
-      return;
-    }
-
-    // Phase 2: Execution & Commit
-    repayBusy = true;
-    $("repaySubmitBtn").disabled = true;
-    $("repaySubmitBtn").textContent = "Saving…";
-
+    const plan = [];
+    $("lkGroups").querySelectorAll("select").forEach((sel) => {
+      const g = linkGroups[Number(sel.dataset.idx)];
+      if (!g || sel.value === "skip") return;
+      plan.push({ saleIds: g.sales.map((s) => s.id), customerId: sel.value === "new" ? null : sel.value, newName: g.name, newPhone: g.phone });
+    });
+    if (!plan.length) { errorBox($("lkError"), "Nothing selected. Choose a customer, or close this window to skip."); return; }
+    const n = plan.reduce((a, g) => a + g.saleIds.length, 0);
+    if (!window.confirm("Link " + n + (n === 1 ? " credit sale" : " credit sales") + " to customers?\n\nThis adds their unpaid amounts to those customers’ ledgers. Sale amounts do not change.")) return;
+    $("lkSave").disabled = true;
     try {
-      const result = await recordRepayment(repaymentPendingData);
-      $("repaymentDialog").close();
-      await refresh();
-      if (window.DukaanSales) await window.DukaanSales.refresh();
-
-      U.toast("Repayment recorded: " + U.money2(result.repayment.amount) + " (" + result.repayment.receiptNo + ")");
-
-      if (currentCustomerId === repayCustomerId) {
-        renderCustomerProfile(getCustomer(repayCustomerId));
-      }
-
-      openRepaymentReceipt(result.repayment, result.customer, result.remainingBalance);
+      const res = await L().linkLegacy(plan);
+      await window.DukaanSales.refresh();
+      document.dispatchEvent(new CustomEvent("ledger-changed"));
+      $("lkDialog").close();
+      U.toast("Linked " + res.linked + (res.linked === 1 ? " sale" : " sales") + (res.created ? " · " + res.created + " new customer" + (res.created === 1 ? "" : "s") : ""));
     } catch (err) {
-      $("repayError").textContent = err.message;
-      $("repayError").hidden = false;
-      repaymentPendingData = null;
-      $("repayConfirmBox").hidden = true;
-      $("repayInputSection").hidden = false;
-      $("repaySubmitBtn").textContent = "Review Repayment";
-    } finally {
-      repayBusy = false;
-      $("repaySubmitBtn").disabled = false;
+      errorBox($("lkError"), err.message || "Could not link the sales.");
+      $("lkSave").disabled = false;
     }
   }
 
-  /* ---------- Repayment Receipt Dialog ---------- */
+  /* ======================  ROUTING  ====================== */
 
-  let currentReceiptData = null;
-
-  function openRepaymentReceipt(repayment, customer, remainingBalance) {
-    currentReceiptData = { repayment, customer, remainingBalance };
-
-    $("rrTitle").textContent = "Repayment Receipt " + repayment.receiptNo;
-    const preview = $("rrPreview");
-    preview.replaceChildren(window.DukaanReceipt.buildRepayment(repayment, customer, remainingBalance, "compact"));
-
-    $("repaymentReceiptDialog").showModal();
+  function showList() {
+    ui.selectedId = "";
+    $("cdDetailPane").hidden = true;
+    $("cuListPane").hidden = false;
+    renderList();
   }
 
-  /* ---------- Init & Wiring ---------- */
+  function showDetail(id) {
+    ui.selectedId = id;
+    ui.showAll = false;
+    $("cdType").value = ""; $("cdFrom").value = ""; $("cdTo").value = "";
+    $("cuListPane").hidden = true;
+    $("cdDetailPane").hidden = false;
+    renderDetail();
+  }
+
+  // Called by script.js when the page is "customers" (sub = "" or a customer id).
+  function route(sub) {
+    if (!ready()) { pendingSub = sub || ""; showList(); return; }
+    pendingSub = "";
+    let id = "";
+    try { id = sub ? decodeURIComponent(sub) : ""; } catch (_) { id = ""; }
+    if (id && L().getCustomer(id)) { showDetail(id); $("cdName").focus(); return; }
+    if (id) U.toast("That customer was not found.");
+    showList();
+  }
+
+  let pendingSub = "";
+  function rerender() {
+    if (pendingSub && ready()) { route(pendingSub); return; }
+    const detail = !$("cdDetailPane").hidden;
+    if (detail) {
+      if (current()) renderDetail(); else showList();
+    } else renderList();
+  }
+
+  /* ======================  WIRING  ====================== */
 
   function init() {
-    $("custSearch").addEventListener("input", (e) => {
-      customerListSearch = e.target.value;
-      renderCustomerList();
+    $("cuAdd").addEventListener("click", () => openForm({}));
+    $("cuExport").addEventListener("click", exportCustomers);
+    ["cuSearch"].forEach((id) => $(id).addEventListener("input", renderList));
+    ["cuStatus", "cuOwing", "cuSort"].forEach((id) => $(id).addEventListener("change", renderList));
+
+    $("custForm").addEventListener("submit", onFormSubmit);
+    $("fcCancel").addEventListener("click", () => $("custDialog").close());
+
+    $("cdBack").addEventListener("click", () => { window.location.hash = "#customers"; });
+    $("cdEdit").addEventListener("click", () => { const c = current(); if (c) openForm({ editId: c.id }); });
+    $("cdRepay").addEventListener("click", () => { const c = current(); if (c) openRepay(c.id); });
+    $("cdArchive").addEventListener("click", toggleArchive);
+    ["cdType", "cdFrom", "cdTo"].forEach((id) => $(id).addEventListener("change", () => { ui.showAll = false; const c = current(); if (c) renderLedger(c); }));
+    $("cdMore").addEventListener("click", () => { ui.showAll = true; const c = current(); if (c) renderLedger(c); });
+    $("cdLedgerCsv").addEventListener("click", exportLedger);
+
+    $("rpForm").addEventListener("submit", onRepayNext);
+    $("rpCancel").addEventListener("click", () => $("rpDialog").close());
+    $("rpBack").addEventListener("click", () => { errorBox($("rpError"), ""); showStage(1); });
+    $("rpConfirm").addEventListener("click", onRepayConfirm);
+    document.querySelectorAll('input[name="rpMode"]').forEach((r) => r.addEventListener("change", () => {
+      if (!r.checked) return;
+      rp.mode = r.value;
+      if (rp.mode === "manual") { rp.alloc = {}; $("rpAmount").value = ""; }
+      errorBox($("rpError"), "");
+      renderAlloc();
+    }));
+    $("rpAmount").addEventListener("input", () => { if (rp.mode === "auto") renderAlloc(); });
+    $("rpAlloc").addEventListener("input", (e) => {
+      const ref = e.target.dataset && e.target.dataset.ref;
+      if (!ref) return;
+      rp.alloc[ref] = e.target.value;
+      syncManualAmount();
+      const t = $("rpManualTotal");
+      if (t) t.lastChild.textContent = U.money2(manualSumP() / 100);
     });
 
-    $("custFilter").addEventListener("change", (e) => {
-      customerListFilter = e.target.value;
-      renderCustomerList();
-    });
+    $("rrClose").addEventListener("click", () => $("rrDialog").close());
+    $("rrPrint").addEventListener("click", () => { if (slipRep) window.DukaanReceipt.printRepayment(slipRep); });
 
-    $("addCustBtn").addEventListener("click", () => openCustomerDialog());
-    $("cdBackBtn").addEventListener("click", hideCustomerDetail);
+    $("lkForm").addEventListener("submit", onLinkSubmit);
+    $("lkCancel").addEventListener("click", () => $("lkDialog").close());
 
-    $("cdEditBtn").addEventListener("click", () => {
-      if (currentCustomerId) openCustomerDialog(currentCustomerId);
-    });
-
-    $("cdArchiveBtn").addEventListener("click", async () => {
-      if (!currentCustomerId) return;
-      const c = getCustomer(currentCustomerId);
-      if (!c) return;
-      const toArchive = c.status === "active";
-      const confirmMsg = toArchive
-        ? "Archive customer “" + c.name + "”? Transaction history and ledger records will be preserved."
-        : "Restore customer “" + c.name + "” to active status?";
-      if (!window.confirm(confirmMsg)) return;
-
-      try {
-        await toggleArchive(currentCustomerId, toArchive);
-        await refresh();
-        U.toast(toArchive ? "Customer archived." : "Customer restored.");
-        renderCustomerProfile(getCustomer(currentCustomerId));
-      } catch (e) {
-        U.toast("Error: " + e.message);
-      }
-    });
-
-    $("cdRepayBtn").addEventListener("click", () => {
-      if (currentCustomerId) openRepaymentDialog(currentCustomerId);
-    });
-
-    // Ledger filters
-    ["cdLFrom", "cdLTo", "cdLType"].forEach((id) => {
-      $(id).addEventListener("change", () => {
-        if (currentCustomerId) renderLedgerTable(currentCustomerId);
-      });
-    });
-
-    $("cdLClearFilter").addEventListener("click", () => {
-      $("cdLFrom").value = "";
-      $("cdLTo").value = "";
-      $("cdLType").value = "";
-      if (currentCustomerId) renderLedgerTable(currentCustomerId);
-    });
-
-    // Customer Form
-    $("customerForm").addEventListener("submit", onCustomerFormSubmit);
-    $("custCancelBtn").addEventListener("click", () => $("customerDialog").close());
-
-    // Repayment Form
-    $("repayForm").addEventListener("submit", onRepaymentFormSubmit);
-    $("repayCancelBtn").addEventListener("click", () => {
-      if (repaymentPendingData) {
-        repaymentPendingData = null;
-        $("repayConfirmBox").hidden = true;
-        $("repayInputSection").hidden = false;
-        $("repaySubmitBtn").textContent = "Review Repayment";
-      } else {
-        $("repaymentDialog").close();
-      }
-    });
-
-    $("repayAmount").addEventListener("input", (e) => {
-      const a = U.parseMoney(e.target.value);
-      if (Number.isFinite(a) && a > 0) {
-        updateBillAllocationsFromTotal(a);
-      }
-    });
-
-    $("repayAutoAllocBtn").addEventListener("click", () => {
-      const a = U.parseMoney($("repayAmount").value);
-      if (Number.isFinite(a) && a > 0) {
-        updateBillAllocationsFromTotal(a);
-      }
-    });
-
-    $("repayPayFullBtn").addEventListener("click", () => {
-      const bal = getCustomerBalance(repayCustomerId);
-      if (bal > 0) {
-        $("repayAmount").value = bal.toFixed(2);
-        updateBillAllocationsFromTotal(bal);
-      }
-    });
-
-    // Repayment Receipt dialog actions
-    $("rrClose").addEventListener("click", () => $("repaymentReceiptDialog").close());
-    $("rrPrint").addEventListener("click", () => {
-      if (currentReceiptData) {
-        window.DukaanReceipt.printRepayment(currentReceiptData.repayment, currentReceiptData.customer, currentReceiptData.remainingBalance, "compact");
-      }
-    });
-    $("rrPrintA4").addEventListener("click", () => {
-      if (currentReceiptData) {
-        window.DukaanReceipt.printRepayment(currentReceiptData.repayment, currentReceiptData.customer, currentReceiptData.remainingBalance, "a4");
-      }
-    });
-
-    // Listen to sales changes
-    document.addEventListener("sales-changed", () => {
-      refresh().then(() => {
-        if (currentCustomerId) {
-          const c = getCustomer(currentCustomerId);
-          if (c) renderCustomerProfile(c);
-        } else {
-          renderCustomerList();
-        }
-      });
-    });
-
-    refresh().then(renderCustomerList);
+    document.addEventListener("ledger-changed", rerender);
+    document.addEventListener("sales-changed", () => { if ($("cdDetailPane").hidden) renderLinkNotice(); });
+    renderList();
   }
 
   document.addEventListener("DOMContentLoaded", init);
-
-  window.DukaanCustomers = {
-    refresh: refresh,
-    list: listCustomers,
-    get: getCustomer,
-    save: saveCustomer,
-    archive: toggleArchive,
-    getLedger: getCustomerLedger,
-    getBalance: getCustomerBalance,
-    totalCreditOutstanding: totalCreditOutstanding,
-    getOutstandingBills: getCustomerOutstandingBills,
-    recordRepayment: recordRepayment,
-    openAddDialog: openCustomerDialog,
-    openRepaymentDialog: openRepaymentDialog,
-    showCustomerDetail: showCustomerDetail
-  };
+  window.DukaanCustomers = { openForm: openForm, openRepay: openRepay, route: route, showRepaymentReceipt: showRepaymentReceipt };
 })();

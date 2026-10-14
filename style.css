@@ -304,7 +304,23 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .field-sm input { min-width: 0; }
 }
 
-/* ===== Phase 4: Customers & Udhaar Ledger ===== */
-.alloc-input { min-height: 36px; padding: .25rem .5rem; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
-.alloc-input:focus { border-color: var(--green); outline: 2px solid var(--gold); }
-#custStatsCards { margin-bottom: 1rem; }
+/* ===== Phase 4: customers, udhaar ledger ===== */
+.num.due, strong.due { color: #5c4400; font-weight: 700; }
+.cust-selected { display: flex; justify-content: space-between; align-items: center; gap: .6rem; background: var(--green-soft); border: 1px solid var(--border); border-radius: 10px; padding: .6rem .8rem; margin-bottom: .5rem; }
+.cust-selected[hidden], #sCustPicker[hidden] { display: none; }
+.alloc-row { display: grid; grid-template-columns: 1fr 7rem auto; gap: .5rem; align-items: center; padding: .5rem 0; border-bottom: 1px solid var(--border); }
+.radio-group { border: 1px solid var(--border); border-radius: 10px; margin: .8rem 0; padding: .4rem .8rem; }
+.radio-row { flex-direction: row; align-items: center; gap: .5rem; min-height: 44px; font-weight: 500; }
+.radio-row input { width: 1.1rem; height: 1.1rem; min-height: 0; }
+.link-group { border-bottom: 1px solid var(--border); padding: .7rem 0; display: grid; gap: .4rem; }
+.ledger .debit { color: #7a1515; }
+.ledger .credit { color: var(--green); }
+.ledger th, .ledger td { white-space: normal; }
+.table-wrap.always { display: block; }
+#cuLinkNotice { margin: 0 0 1rem; }
+#cuLinkNotice .btn { margin-left: .4rem; }
+@media (max-width: 640px) {
+  .table-wrap.always { display: block !important; }
+  .alloc-row { grid-template-columns: 1fr 6rem auto; }
+  .ledger { font-size: .82rem; }
+}

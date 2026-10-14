@@ -11,7 +11,7 @@
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>OFFLINE READY (Phase 4)</strong> &mdash; Products, sales, customer management and udhaar ledgers are saved locally in this browser. Expenses, reports and backup arrive in later phases.
+    <strong>PROTOTYPE (Phase 4)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. There is no backup yet, so clearing browser data would delete them. Expenses, reports and backup are not built yet.
   </div>
 
   <div class="app">
@@ -24,7 +24,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 4 &middot; Offline Ready</p>
+      <p class="sidebar-note">Phase 4 &middot; Prototype</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -66,9 +66,8 @@
           <div class="quick-actions" aria-label="Quick actions">
             <button class="btn btn-primary" data-go="sale">+ New Sale</button>
             <button class="btn" data-go="products" data-action="add-product">+ Add Product</button>
-            <button class="btn" data-go="customers" data-action="add-customer">+ Add Customer</button>
-            <button class="btn" data-go="customers">Customers &amp; Udhaar</button>
             <button class="btn" data-go="expenses">+ Add Expense</button>
+            <button class="btn" data-go="customers">Customers</button>
           </div>
 
           <h2 class="section-title">Today&rsquo;s money &amp; sales</h2>
@@ -107,21 +106,17 @@
               </div>
             </div>
             <div class="sale-right">
-              <div class="panel">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
-                  <h3 style="margin-bottom:0;">Customer</h3>
-                  <button class="btn btn-sm" type="button" id="sCustQuickAdd">+ New Customer</button>
-                </div>
-                <div class="form-grid">
-                  <label>Name or Search
-                    <input id="sCustName" type="text" list="customerNames" maxlength="80" autocomplete="off" placeholder="Search or type name (Walk-in if empty)">
+              <div class="panel" id="sCustPanel">
+                <h3>Customer</h3>
+                <div id="sCustSelected" class="cust-selected" hidden></div>
+                <div id="sCustPicker">
+                  <label>Find a customer (name or phone)
+                    <input id="sCustSearch" type="search" maxlength="80" autocomplete="off" placeholder="Walk-in sale if empty">
                   </label>
-                  <label>Phone (optional)
-                    <input id="sCustPhone" type="tel" maxlength="20" autocomplete="off">
-                  </label>
+                  <div id="sCustResults" class="results"></div>
+                  <button class="btn btn-sm" type="button" id="sCustNew">+ New customer</button>
                 </div>
-                <div id="sCustBalanceBox" class="note-box" style="margin-top:.5rem; padding:.5rem .75rem;" hidden></div>
-                <p class="card-hint">A registered customer is required when part or all of the bill is on credit (udhaar).</p>
+                <p class="card-hint">A customer is needed only when something is on credit (udhaar).</p>
               </div>
               <div class="panel">
                 <h3>Discount and tax</h3>
@@ -232,109 +227,84 @@
           <p class="card-hint">A whole sale can be cancelled from its details. Partial returns and refund records are not built yet.</p>
         </section>
 
-        <!-- CUSTOMERS & UDHAAR LEDGER -->
+        <!-- CUSTOMERS -->
         <section class="view" id="view-customers" aria-labelledby="h-customers" hidden>
-          <!-- Customer List Subview -->
-          <div id="custListView">
+          <div id="cuListPane">
             <div class="page-head">
               <h1 id="h-customers">Customers &amp; Udhaar</h1>
               <div class="quick-actions">
-                <button class="btn btn-primary" type="button" id="addCustBtn">+ Add Customer</button>
+                <button class="btn" type="button" id="cuExport">Export CSV</button>
+                <button class="btn btn-primary" type="button" id="cuAdd">+ Add Customer</button>
               </div>
             </div>
-
-            <div class="cards" id="custStatsCards"></div>
-
-            <div class="toolbar" style="margin-top: 1rem;">
-              <label class="grow">
-                <span class="sr-only">Search customers by name or phone</span>
-                <input type="search" id="custSearch" placeholder="Search by customer name or phone…" autocomplete="off">
-              </label>
-              <label>
-                <span class="sr-only">Filter customers</span>
-                <select id="custFilter">
+            <div id="cuError" class="alert" role="alert" hidden></div>
+            <div id="cuLinkNotice" class="note-box" hidden></div>
+            <div class="cards" id="cuCards"></div>
+            <div class="toolbar" style="margin-top:1rem">
+              <label class="grow"><span class="sr-only">Search customers</span><input type="search" id="cuSearch" placeholder="Search name or phone" autocomplete="off"></label>
+              <label><span class="sr-only">Status</span>
+                <select id="cuStatus">
                   <option value="active" selected>Active customers</option>
-                  <option value="due">With balance due (Udhaar)</option>
                   <option value="archived">Archived customers</option>
                   <option value="all">All customers</option>
                 </select>
               </label>
+              <label><span class="sr-only">Balance filter</span>
+                <select id="cuOwing">
+                  <option value="">Any balance</option>
+                  <option value="owing">Owes money</option>
+                  <option value="clear">Nothing owed</option>
+                </select>
+              </label>
+              <label><span class="sr-only">Sort by</span>
+                <select id="cuSort">
+                  <option value="name" selected>Name A&ndash;Z</option>
+                  <option value="balance">Highest balance first</option>
+                  <option value="recent">Newest first</option>
+                </select>
+              </label>
             </div>
-
-            <p class="muted" id="custListCount" aria-live="polite"></p>
-            <div id="custListWrap"></div>
+            <p class="muted" id="cuCount" aria-live="polite"></p>
+            <div id="cuList"></div>
           </div>
 
-          <!-- Customer Detail & Ledger Subview -->
-          <div id="custDetailView" hidden>
+          <div id="cdDetailPane" hidden>
             <div class="page-head">
-              <div style="display:flex; align-items:center; gap: 1rem; flex-wrap: wrap;">
-                <button class="btn btn-sm" type="button" id="cdBackBtn">&larr; Back to customers</button>
-                <h1 id="cdName" style="margin:0;"></h1>
-                <span id="cdStatusBadge" class="badge"></span>
+              <div>
+                <button class="btn btn-sm" type="button" id="cdBack">&larr; All customers</button>
+                <h1 id="cdName" tabindex="-1"></h1>
+                <p id="cdBadges"></p>
               </div>
               <div class="quick-actions">
-                <button class="btn btn-sm" type="button" id="cdEditBtn">Edit Customer</button>
-                <button class="btn btn-sm" type="button" id="cdArchiveBtn">Archive Customer</button>
-                <button class="btn btn-primary btn-sm" type="button" id="cdRepayBtn">Record Repayment</button>
+                <button class="btn btn-primary" type="button" id="cdRepay">Receive payment</button>
+                <button class="btn" type="button" id="cdEdit">Edit</button>
+                <button class="btn" type="button" id="cdArchive">Archive</button>
               </div>
             </div>
-
-            <div class="panel" style="margin-bottom: 1rem;">
-              <div class="form-grid">
-                <div id="cdPhoneWrap">
-                  <span class="card-hint">Phone</span>
-                  <div id="cdPhone" style="font-weight:600;"></div>
-                </div>
-                <div id="cdAddressWrap">
-                  <span class="card-hint">Address</span>
-                  <div id="cdAddress"></div>
-                </div>
-                <div id="cdNotesWrap" class="span2">
-                  <span class="card-hint">Notes</span>
-                  <div id="cdNotes" class="muted" style="margin:0;"></div>
-                </div>
-              </div>
+            <dl class="kv" id="cdContact"></dl>
+            <div class="cards" id="cdCards"></div>
+            <h2 class="section-title">Bills still owed</h2>
+            <div id="cdBills"></div>
+            <h2 class="section-title">Payments received</h2>
+            <div id="cdReps"></div>
+            <h2 class="section-title">Ledger</h2>
+            <div class="toolbar">
+              <label><span class="sr-only">Entry type</span>
+                <select id="cdType">
+                  <option value="">All entries</option>
+                  <option value="opening">Opening balance</option>
+                  <option value="credit-sale">Credit sales</option>
+                  <option value="repayment">Repayments</option>
+                  <option value="sale-cancel">Cancelled credit</option>
+                </select>
+              </label>
+              <label class="field-sm">From<input type="date" id="cdFrom"></label>
+              <label class="field-sm">To<input type="date" id="cdTo"></label>
+              <button class="btn" type="button" id="cdLedgerCsv">Export ledger CSV</button>
             </div>
-
-            <div class="cards" style="margin-bottom: 1.25rem;">
-              <div class="card accent-gold">
-                <div class="card-label">Outstanding Balance</div>
-                <div id="cdBalance" class="card-value sum-due">₹0.00</div>
-                <div class="card-hint">Unpaid Udhaar across all bills</div>
-              </div>
-              <div class="card">
-                <div class="card-label">Outstanding Bills</div>
-                <div id="cdBillsCount" class="card-value">0</div>
-                <div class="card-hint">Invoices with remaining credit</div>
-              </div>
-            </div>
-
-            <div class="panel" style="margin-bottom: 1.25rem;">
-              <h2 style="font-size: 1.1rem; margin-bottom: .8rem;">Outstanding Invoices (Unpaid Bills)</h2>
-              <div id="cdBillsWrap"></div>
-            </div>
-
-            <div class="panel">
-              <div class="page-head" style="margin-bottom: .8rem;">
-                <h2 style="font-size: 1.1rem; margin:0;">Complete Udhaar Ledger</h2>
-              </div>
-              <div class="toolbar">
-                <label class="field-sm">From<input type="date" id="cdLFrom"></label>
-                <label class="field-sm">To<input type="date" id="cdLTo"></label>
-                <label>
-                  <span class="sr-only">Transaction type</span>
-                  <select id="cdLType">
-                    <option value="">All transactions</option>
-                    <option value="credit_sale">Credit sales</option>
-                    <option value="repayment">Repayments</option>
-                    <option value="cancellation">Cancellations</option>
-                  </select>
-                </label>
-                <button class="btn btn-sm" type="button" id="cdLClearFilter">Clear filters</button>
-              </div>
-              <div id="cdLedgerWrap"></div>
-            </div>
+            <div id="cdLedger"></div>
+            <div class="center"><button class="btn" type="button" id="cdMore" hidden>Show full ledger</button></div>
+            <p class="card-hint">The balance is the total of the ledger entries. It cannot be typed over. Entries are never deleted; a correction is a new entry. A repayment, once saved, cannot be reversed in this version.</p>
           </div>
         </section>
 
@@ -354,29 +324,28 @@
         <section class="view" id="view-reports" aria-labelledby="h-reports" hidden>
           <div class="page-head"><h1 id="h-reports">Reports</h1></div>
           <div class="empty-state">
-            <h2>Reports arrive in Phase 5</h2>
-            <p>Sales summary, payment breakdown, profit &amp; loss and GST summaries will appear here.</p>
+            <h2>Reports need real data</h2>
+            <p>Sales, profit estimates, inventory value and credit reports arrive in Phase 5.</p>
           </div>
         </section>
 
         <!-- SETTINGS -->
         <section class="view" id="view-settings" aria-labelledby="h-settings" hidden>
-          <div class="page-head"><h1 id="h-settings">Settings</h1></div>
-          <form class="panel" id="settingsForm" novalidate>
-            <h3>Shop details for receipts &amp; invoices</h3>
-            <p class="muted">These details appear at the top and bottom of printed bills.</p>
-            <div id="stMsg" class="alert" role="alert" hidden></div>
+          <div class="page-head"><h1 id="h-settings">Settings &amp; Backup</h1></div>
+          <form class="panel" id="shopForm" novalidate>
+            <h3>Shop details (printed on receipts)</h3>
+            <div id="stBanner" class="alert" role="alert" hidden></div>
             <div class="form-grid">
               <label>Shop name
-                <input id="stName" type="text" maxlength="80" autocomplete="off" placeholder="My Kirana Store">
+                <input id="stName" type="text" maxlength="80" autocomplete="off">
                 <span class="err" id="e-stName"></span>
               </label>
-              <label>Phone
+              <label>Phone (optional)
                 <input id="stPhone" type="tel" maxlength="20" autocomplete="off">
                 <span class="err" id="e-stPhone"></span>
               </label>
-              <label class="span2">Address
-                <input id="stAddress" type="text" maxlength="160" autocomplete="off">
+              <label class="span2">Address (optional)
+                <input id="stAddress" type="text" maxlength="200" autocomplete="off">
                 <span class="err" id="e-stAddress"></span>
               </label>
               <label>Invoice prefix
@@ -517,8 +486,6 @@
   </dialog>
 
   <!-- Sale details, cancellation and printing -->
-  <datalist id="customerNames"></datalist>
-
   <dialog id="saleDialog" aria-labelledby="sdTitle">
     <div class="dlg-head">
       <h2 id="sdTitle">Invoice</h2>
@@ -540,6 +507,7 @@
     <form id="cancelForm" novalidate>
       <h2 id="cTitle">Cancel sale?</h2>
       <p class="muted">The items go back into stock (once only) and the sale is marked cancelled. It is not deleted. Any money already received must be refunded to the customer by you; this app only records the cancellation.</p>
+      <div id="cInfo" class="note-box" hidden></div>
       <div id="cError" class="alert" role="alert" hidden></div>
       <label>Reason *
         <textarea id="cReason" maxlength="200" rows="2"></textarea>
@@ -552,110 +520,106 @@
     </form>
   </dialog>
 
-  <!-- Customer Dialog (Phase 4) -->
-  <dialog id="customerDialog" aria-labelledby="custDlgTitle">
-    <form id="customerForm" novalidate>
-      <h2 id="custDlgTitle">Add Customer</h2>
-      <p class="muted">Fields marked * are required.</p>
-      <div id="custError" class="alert" role="alert" hidden></div>
-      <div id="custWarn" class="note-box" style="margin-bottom: 1rem; border-color: var(--gold); background: var(--gold-soft); color: #5c4400;" hidden></div>
+  <!-- Phase 4: customer, repayment, linking dialogs -->
+  <dialog id="custDialog" aria-labelledby="fcTitle">
+    <form id="custForm" novalidate>
+      <h2 id="fcTitle">Add customer</h2>
+      <div id="fcBanner" class="alert" role="alert" hidden></div>
       <div class="form-grid">
-        <label class="span2">Customer Name *
-          <input id="custName" type="text" maxlength="80" autocomplete="off" placeholder="e.g. Ramesh Kumar">
-          <span class="err" id="e-custName"></span>
+        <label class="span2">Name *
+          <input id="fcName" type="text" maxlength="80" autocomplete="off">
+          <span class="err" id="e-fcName"></span>
         </label>
-        <label class="span2">Phone number (optional)
-          <input id="custPhone" type="tel" maxlength="20" autocomplete="off" placeholder="10-digit mobile number">
-          <span class="err" id="e-custPhone"></span>
+        <label>Phone (optional)
+          <input id="fcPhone" type="tel" maxlength="20" autocomplete="off">
+          <span class="err" id="e-fcPhone"></span>
+        </label>
+        <label id="gcOpening">Opening balance owed (&#8377;)
+          <input id="fcOpening" type="text" inputmode="decimal" autocomplete="off" placeholder="0">
+          <span class="err" id="e-fcOpening"></span>
         </label>
         <label class="span2">Address (optional)
-          <input id="custAddress" type="text" maxlength="200" autocomplete="off" placeholder="Street / locality / area">
+          <input id="fcAddress" type="text" maxlength="200" autocomplete="off">
+          <span class="err" id="e-fcAddress"></span>
         </label>
         <label class="span2">Notes (optional)
-          <textarea id="custNotes" maxlength="500" rows="2" placeholder="Reference, landmarks, or details"></textarea>
+          <textarea id="fcNotes" maxlength="500" rows="2"></textarea>
+          <span class="err" id="e-fcNotes"></span>
         </label>
       </div>
+      <p class="card-hint" id="fcHint">The opening balance is money the customer already owed you before you started using this app. It can only be entered now, when the customer is added.</p>
       <div class="dlg-foot">
-        <button class="btn" type="button" id="custCancelBtn">Cancel</button>
-        <button class="btn btn-primary" type="submit" id="custSaveBtn">Save Customer</button>
+        <button class="btn" type="button" id="fcCancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="fcSave">Save customer</button>
       </div>
     </form>
   </dialog>
 
-  <!-- Repayment Dialog (Phase 4) -->
-  <dialog id="repaymentDialog" aria-labelledby="repayTitle">
-    <form id="repayForm" novalidate>
-      <h2 id="repayTitle">Record Repayment</h2>
-      <div style="margin: .4rem 0 .8rem; font-size: .95rem;">
-        Total balance due: <strong class="sum-due" id="repayCustomerBal">&#8377;0.00</strong>
+  <dialog id="rpDialog" aria-labelledby="rpTitle">
+    <form id="rpForm" novalidate>
+      <h2 id="rpTitle">Receive payment</h2>
+      <p class="muted" id="rpWho"></p>
+      <div id="rpError" class="alert" role="alert" hidden></div>
+      <div id="rpStage1">
+        <div class="form-grid">
+          <label>Method
+            <select id="rpMethod"></select>
+          </label>
+          <label>Amount received (&#8377;) *
+            <input id="rpAmount" type="text" inputmode="decimal" autocomplete="off">
+            <span class="err" id="e-rpAmount"></span>
+          </label>
+          <label>Payment reference (optional)
+            <input id="rpRef" type="text" maxlength="60" autocomplete="off" placeholder="UPI / cheque no.">
+          </label>
+          <label>Note (optional)
+            <input id="rpNote" type="text" maxlength="200" autocomplete="off">
+          </label>
+        </div>
+        <fieldset class="radio-group">
+          <legend>Apply the money to</legend>
+          <label class="radio-row"><input type="radio" name="rpMode" value="auto" checked> Oldest bills first (automatic)</label>
+          <label class="radio-row"><input type="radio" name="rpMode" value="manual"> Choose bills myself</label>
+        </fieldset>
+        <div id="rpAlloc"></div>
+        <p class="card-hint">UPI, card and bank entries are records only. This app does not check them with any bank.</p>
       </div>
-      <div id="repayError" class="alert" role="alert" hidden></div>
-
-      <div id="repayInputSection">
-        <div class="form-grid" style="margin-bottom: 1rem;">
-          <label>Repayment Amount (&#8377;) *
-            <input id="repayAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00">
-          </label>
-          <label>Payment Method *
-            <select id="repayMethod">
-              <option value="cash" selected>Cash</option>
-              <option value="upi">UPI (recorded)</option>
-              <option value="card">Card (recorded)</option>
-              <option value="bank">Bank transfer (recorded)</option>
-            </select>
-          </label>
-          <div class="quick-actions span2" style="margin-top:-.3rem;">
-            <button class="btn btn-sm" type="button" id="repayPayFullBtn">Pay full balance</button>
-            <button class="btn btn-sm" type="button" id="repayAutoAllocBtn">Auto-allocate (oldest first)</button>
-          </div>
-          <label class="span2">Payment Reference / Note (optional)
-            <input id="repayNote" type="text" maxlength="200" autocomplete="off" placeholder="e.g. UPI Ref / Cheque No">
-          </label>
-        </div>
-
-        <h3 style="font-size: .95rem; margin-bottom: .4rem;">Allocate Against Outstanding Invoices</h3>
-        <p class="muted" style="font-size: .8rem; margin-bottom: .6rem;">You can adjust the allocation amounts below or use Auto-allocate.</p>
-        <div class="table-wrap" style="max-height: 240px; overflow-y: auto;">
-          <table>
-            <thead>
-              <tr>
-                <th>Invoice</th>
-                <th>Date</th>
-                <th class="num">Bill Total</th>
-                <th class="num">Due</th>
-                <th class="num">Allocate (&#8377;)</th>
-              </tr>
-            </thead>
-            <tbody id="repayBillsBody"></tbody>
-          </table>
-        </div>
-        <div style="display:flex; justify-content:space-between; margin-top:.5rem; font-weight:600; font-size:.9rem;">
-          <span>Allocated Total:</span>
-          <span id="repayAllocSum">&#8377;0.00</span>
-        </div>
+      <div id="rpStage2" hidden>
+        <h3>Please check</h3>
+        <div id="rpReview"></div>
       </div>
-
-      <div id="repayConfirmBox" class="note-box" style="margin-top: .8rem;" hidden></div>
-
       <div class="dlg-foot">
-        <button class="btn" type="button" id="repayCancelBtn">Cancel</button>
-        <button class="btn btn-primary" type="submit" id="repaySubmitBtn">Review Repayment</button>
+        <button class="btn" type="button" id="rpCancel">Cancel</button>
+        <button class="btn" type="button" id="rpBack" hidden>Back</button>
+        <button class="btn btn-primary" type="submit" id="rpNext">Review</button>
+        <button class="btn btn-primary" type="button" id="rpConfirm" hidden>Confirm and save</button>
       </div>
     </form>
   </dialog>
 
-  <!-- Repayment Receipt Dialog (Phase 4) -->
-  <dialog id="repaymentReceiptDialog" aria-labelledby="rrTitle">
+  <dialog id="rrDialog" aria-labelledby="rrTitle">
     <div class="dlg-head">
-      <h2 id="rrTitle">Repayment Receipt</h2>
-      <button class="icon-btn" type="button" id="rrClose" aria-label="Close repayment receipt"><span aria-hidden="true">&#10005;</span></button>
+      <h2 id="rrTitle">Payment saved</h2>
+      <button class="icon-btn" type="button" id="rrClose" aria-label="Close"><span aria-hidden="true">&#10005;</span></button>
     </div>
     <div id="rrPreview" class="receipt-preview"></div>
     <div class="dlg-foot">
-      <button class="btn" type="button" id="rrPrintA4">Print A4 invoice</button>
-      <button class="btn btn-primary" type="button" id="rrPrint">Print receipt</button>
+      <button class="btn btn-primary" type="button" id="rrPrint">Print slip</button>
     </div>
-    <p class="card-hint">Repayment recorded offline on this device. Use your browser's print dialog to print or save as PDF.</p>
+    <p class="card-hint">Printing uses your browser&rsquo;s print dialog.</p>
+  </dialog>
+
+  <dialog id="lkDialog" aria-labelledby="lkTitle">
+    <form id="lkForm" novalidate>
+      <h2 id="lkTitle">Link earlier credit sales</h2>
+      <p class="muted">These credit sales were made before customer records existed, so they only have a name. Choose the customer each group belongs to. Amounts do not change. Sales you skip stay as they are and are shown separately on the dashboard.</p>
+      <div id="lkError" class="alert" role="alert" hidden></div>
+      <div id="lkGroups"></div>
+      <div class="dlg-foot">
+        <button class="btn" type="button" id="lkCancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="lkSave">Link selected</button>
+      </div>
+    </form>
   </dialog>
 
   <div id="printArea" aria-hidden="true"></div>
@@ -672,6 +636,7 @@
   <script src="js/util.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/products.js"></script>
+  <script src="js/ledger.js"></script>
   <script src="js/sales.js"></script>
   <script src="js/receipt.js"></script>
   <script src="js/history.js"></script>

@@ -1,5 +1,5 @@
 /*
- * db.js - IndexedDB storage helper (Phase 2, Phase 3, extended in Phase 4).
+ * db.js - IndexedDB storage helper (Phase 2, extended in Phase 3).
  * All business records live in IndexedDB, never in localStorage.
  * Other files call DukaanDB.run(...) so every change happens inside a
  * transaction, and success is reported only after the transaction commits.
@@ -8,8 +8,8 @@
   "use strict";
 
   const DB_NAME = "dukaan-manager";
-  // Version 3 (Phase 4) adds customers, customerLedger, repayments, repaymentAllocations.
-  // Existing v1 and v2 data is preserved as is without any data loss.
+  // Version 2 (Phase 3) adds sales, counters and settings. Version 3 (Phase 4) adds customers,
+  // ledger and repayments. Each upgrade only ADDS stores, so existing data is kept as is.
   const DB_VERSION = 3;
   let dbPromise = null;
 
@@ -42,9 +42,6 @@
       }
       req.onupgradeneeded = () => {
         const db = req.result;
-        const tx = req.transaction;
-
-        // --- Phase 2: products, stock history ---
         if (!db.objectStoreNames.contains("products")) {
           const s = db.createObjectStore("products", { keyPath: "id" });
           s.createIndex("sku", "sku");
@@ -54,8 +51,7 @@
           const s = db.createObjectStore("stockHistory", { keyPath: "id" });
           s.createIndex("productId", "productId");
         }
-
-        // --- Phase 3: sales, invoice counter, settings ---
+        // --- added in version 2 (Phase 3) ---
         if (!db.objectStoreNames.contains("sales")) {
           const s = db.createObjectStore("sales", { keyPath: "id" });
           s.createIndex("invoiceNo", "invoiceNo", { unique: true });
@@ -63,23 +59,21 @@
           s.createIndex("status", "status");
         }
         if (!db.objectStoreNames.contains("counters")) {
-          db.createObjectStore("counters", { keyPath: "name" }); // counters (invoice, repayment, etc.)
+          db.createObjectStore("counters", { keyPath: "name" }); // invoice number counter
         }
         if (!db.objectStoreNames.contains("settings")) {
           db.createObjectStore("settings", { keyPath: "key" }); // shop details
         }
-
-        // --- Phase 4: Customers & Udhaar Ledger ---
+        // --- added in version 3 (Phase 4): customers, ledger, repayments. Nothing existing is touched. ---
         if (!db.objectStoreNames.contains("customers")) {
           const s = db.createObjectStore("customers", { keyPath: "id" });
-          s.createIndex("phone", "phone");
-          s.createIndex("name", "name");
           s.createIndex("status", "status");
-          s.createIndex("createdAt", "createdAt");
+          s.createIndex("phoneKey", "phoneKey");
         }
-        if (!db.objectStoreNames.contains("customerLedger")) {
-          const s = db.createObjectStore("customerLedger", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("ledger")) {
+          const s = db.createObjectStore("ledger", { keyPath: "id" });
           s.createIndex("customerId", "customerId");
+          s.createIndex("refKey", "refKey");
           s.createIndex("saleId", "saleId");
           s.createIndex("repaymentId", "repaymentId");
           s.createIndex("createdAt", "createdAt");
@@ -89,20 +83,7 @@
           const s = db.createObjectStore("repayments", { keyPath: "id" });
           s.createIndex("customerId", "customerId");
           s.createIndex("createdAt", "createdAt");
-          s.createIndex("receiptNo", "receiptNo");
-        }
-        if (!db.objectStoreNames.contains("repaymentAllocations")) {
-          const s = db.createObjectStore("repaymentAllocations", { keyPath: "id" });
-          s.createIndex("repaymentId", "repaymentId");
-          s.createIndex("saleId", "saleId");
-          s.createIndex("customerId", "customerId");
-        }
-
-        if (db.objectStoreNames.contains("sales") && tx) {
-          const salesStore = tx.objectStore("sales");
-          if (!salesStore.indexNames.contains("customerId")) {
-            salesStore.createIndex("customerId", "customerId");
-          }
+          s.createIndex("refNo", "refNo", { unique: true });
         }
       };
       req.onsuccess = () => {

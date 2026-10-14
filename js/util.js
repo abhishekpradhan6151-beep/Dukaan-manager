@@ -50,12 +50,36 @@
   const METHOD_SHORT = { cash: "Cash", upi: "UPI", card: "Card", bank: "Bank" };
 
   // One short word describing how a sale was paid, for lists.
-  function paymentSummary(sale) {
+  // dueNow (optional) is what is still owed on the bill today, from the customer ledger.
+  function paymentSummary(sale, dueNow) {
     if (sale.status === "cancelled") return { label: "Cancelled", cls: "out" };
+    if (sale.outstanding > 0) {
+      const due = typeof dueNow === "number" ? dueNow : sale.outstanding;
+      if (due <= 0) return { label: "Udhaar cleared", cls: "" };
+      return sale.payments.length ? { label: "Part paid", cls: "credit" } : { label: "Udhaar", cls: "credit" };
+    }
     if (!sale.payments.length) return { label: "Udhaar", cls: "credit" };
-    if (sale.outstanding > 0) return { label: "Part paid", cls: "credit" };
     const kinds = Array.from(new Set(sale.payments.map((p) => p.method)));
     return kinds.length === 1 ? { label: METHOD_SHORT[kinds[0]] || kinds[0], cls: "" } : { label: "Split", cls: "" };
+  }
+
+  /* CSV: quote every cell, and neutralise spreadsheet formulas (= + - @). */
+  function csvCell(val) {
+    let s = val === null || val === undefined ? "" : String(val);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  function toCsv(rows) { return rows.map((r) => r.map(csvCell).join(",")).join("\r\n"); }
+  function downloadCsv(filename, rows) {
+    const blob = new Blob(["﻿" + toCsv(rows)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   let toastTimer = null;
@@ -69,6 +93,7 @@
 
   window.DukaanUtil = {
     $, el, round, money, money2, qty, dateTime, dateKey, todayKey,
-    parseMoney, parseQty, parsePercent, METHODS, METHOD_SHORT, paymentSummary, toast
+    parseMoney, parseQty, parsePercent, METHODS, METHOD_SHORT, paymentSummary, toast,
+    csvCell, toCsv, downloadCsv
   };
 })();
