@@ -324,3 +324,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .alloc-row { grid-template-columns: 1fr 6rem auto; }
   .ledger { font-size: .82rem; }
 }
+
+/* ===== Phase 5: expenses, reports ===== */
+tr.voided td, .tx-item.voided { opacity: .6; text-decoration: line-through; }
+tr.voided td:last-child, .tx-item.voided .p-actions { text-decoration: none; }

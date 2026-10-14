@@ -8,9 +8,9 @@
   "use strict";
 
   const DB_NAME = "dukaan-manager";
-  // Version 2 (Phase 3) adds sales, counters and settings. Version 3 (Phase 4) adds customers,
+  // Version 2 (Phase 3) adds sales, counters and settings. Version 4 (Phase 5) adds expenses. Version 3 (Phase 4) adds customers,
   // ledger and repayments. Each upgrade only ADDS stores, so existing data is kept as is.
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   let dbPromise = null;
 
   function friendly(err) {
@@ -84,6 +84,13 @@
           s.createIndex("customerId", "customerId");
           s.createIndex("createdAt", "createdAt");
           s.createIndex("refNo", "refNo", { unique: true });
+        }
+        // --- added in version 4 (Phase 5): expenses. Nothing existing is touched. ---
+        if (!db.objectStoreNames.contains("expenses")) {
+          const s = db.createObjectStore("expenses", { keyPath: "id" });
+          s.createIndex("dateKey", "dateKey");
+          s.createIndex("category", "category");
+          s.createIndex("status", "status");
         }
       };
       req.onsuccess = () => {

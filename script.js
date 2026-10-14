@@ -108,6 +108,14 @@
     return { state: "ready", d: S.dashboard() };
   }
 
+  function expenseCard() {
+    const X = window.DukaanExpenses;
+    if (!X || X.status() === "loading") return card("Expenses", "…", "Loading", "gold");
+    if (X.status() === "failed") return card("Expenses", "–", "Storage unavailable", "warn");
+    const k = U.todayKey();
+    return card("Expenses", fmt(X.totalP(X.inRange(k, k)) / 100), "Recorded today. Voided ones excluded.", "gold");
+  }
+
   function renderMoneyCards() {
     const wrap = $("cardsMoney");
     wrap.replaceChildren();
@@ -125,7 +133,7 @@
       card("UPI recorded", fmt(t.upi), "Recorded by you, not verified", "teal"),
       card("Card / bank recorded", fmt(t.other), "Recorded by you, not verified", "teal"),
       card("Credit sales", fmt(t.credit), "Unpaid part of today’s bills (udhaar)", "gold"),
-      card("Expenses", "–", "Arrive in Phase 5", "gold"),
+      expenseCard(),
       card("Est. gross profit", fmt(t.gross), t.costMissing ? "Estimate. Some items have no cost, so profit may be overstated." : "Estimate, before expenses")
     );
   }
@@ -253,11 +261,13 @@
     document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => {
       go(b.dataset.go);
       if (b.dataset.action === "add-product" && window.DukaanProducts) window.DukaanProducts.openAdd();
+      if (b.dataset.action === "add-expense" && window.DukaanExpenses) window.DukaanExpenses.openAdd();
     }));
     // The dashboard follows the saved data.
     document.addEventListener("products-changed", renderDashboard);
     document.addEventListener("sales-changed", renderDashboard);
     document.addEventListener("ledger-changed", renderDashboard);
+    document.addEventListener("expenses-changed", renderDashboard);
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleMenu(false); });
     window.addEventListener("hashchange", () => go(location.hash.slice(1)));
     go(location.hash.slice(1) || "dashboard");

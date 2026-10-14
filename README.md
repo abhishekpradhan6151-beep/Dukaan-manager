@@ -1,4 +1,4 @@
-# Dukaan Manager (Phase 4: Customers & Udhaar Ledger)
+# Dukaan Manager (Phase 5: Expenses & Reports)
 
 Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and JavaScript, no build step.
 
@@ -7,6 +7,7 @@ Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and Ja
 - **Phase 2** done: products and inventory (IndexedDB).
 - **Phase 3** done: billing, sales history, receipt and invoice printing, shop details for receipts.
 - **Phase 4** done: customers, udhaar ledger, repayments, linking earlier credit sales.
+- **Phase 5** done: expenses and date-filtered reports.
 - Everything shown is real data saved on this device. There is no sample data any more.
 
 ## Run it
@@ -16,6 +17,11 @@ Serve the folder (browser storage is most reliable on http://localhost):
     python3 -m http.server 8000
 
 then open http://localhost:8000. Opening `index.html` directly may work, but some browsers restrict storage for `file://` pages.
+
+## Using Phase 5 (expenses and reports)
+- **Expenses**: add, edit, search, filter by date, category and status. Categories: Rent, Electricity, Salary, Transport, Supplies, Maintenance, Other. Amounts are stored as integer paise (`amountP`). Expenses are never deleted: **Void** keeps the record with a reason, and edits are logged in its history.
+- **Reports**: Today, This week (Monday to today), This month, or a custom range. Sales exclude cancelled bills. Money received is separate and includes customer repayments, which are never counted as sales. Customer credit is the ledger total today (not limited to the period). Gross profit and the net operating result are shown only when every sale in the period has a saved cost; otherwise they say "Unavailable".
+- Database upgrades 3 to 4 by adding only the `expenses` store.
 
 ## Using Phase 4 (customers and udhaar)
 1. **Customers & Udhaar > + Add Customer**: name (required), phone, address, notes, and an optional opening balance (money owed before you started using the app; it can only be entered when the customer is added). A customer with the same phone as another gives a warning, and you may still save.
@@ -47,7 +53,9 @@ then open http://localhost:8000. Opening `index.html` directly may work, but som
 - `index.html` structure, pages, dialogs
 - `style.css` design system, layouts, receipt and print styles
 - `script.js` navigation and live dashboard
-- `js/db.js` IndexedDB helper (database version 3; upgrades older data without loss)
+- `js/db.js` IndexedDB helper (database version 4; upgrades older data without loss)
+- `js/expenses.js` expenses and the Expenses screen (Phase 5)
+- `js/reports.js` report calculations and screen (Phase 5)
 - `js/ledger.js` customers, ledger, repayments and rules (Phase 4)
 - `js/customers.js` Customers screens, repayment and linking dialogs (Phase 4)
 - `js/util.js` shared helpers (formatting, parsing, toast)
@@ -58,8 +66,8 @@ then open http://localhost:8000. Opening `index.html` directly may work, but som
 - `js/history.js` Sales History, sale details, cancellation
 - `js/receipt.js` receipt and A4 invoice building and printing
 
-## Data stored (IndexedDB database `dukaan-manager`, version 3)
-`products`, `stockHistory`, `sales` (with line items, payments, event log), `counters` (invoice, repayment and ledger numbers), `settings`, and from Phase 4: `customers`, `ledger`, `repayments`.
+## Data stored (IndexedDB database `dukaan-manager`, version 4)
+`products`, `stockHistory`, `sales` (with line items, payments, event log), `counters` (invoice, repayment and ledger numbers), `settings`, and from Phase 4: `customers`, `ledger`, `repayments`, and from Phase 5: `expenses`.
 
 ## Ledger rules
 - A customer's balance is the sum of their ledger entries (debit = owes more, credit = owes less). It is never stored or typed over.
@@ -78,7 +86,8 @@ Open the new version at the same address. The database upgrades from version 2 t
 ## Not implemented yet
 - Reversing a saved repayment, advance payments (paying more than owed), editing an opening balance after creation, refund records, customer deletion (archive only).
 - Backup and restore are NOT built. Customers, ledger and repayments are in IndexedDB and will be included when Phase 6 adds backup. Until then, clearing browser data deletes them.
-- Expenses and reports (Phase 5). Dashboard shows expenses as "–".
+- Report export/printing, charts, per-product reports, recurring expenses, expense receipts/attachments.
+- The Dashboard period selector still shows today only; use Reports for week, month and custom.
 - Partial returns and refund records. Only whole-sale cancellation exists.
 - Backup/restore and data export other than product CSV (Phase 6). Until then, data exists only in this browser.
 - Default tax setting (tax is typed per bill), login or user permissions (anyone using the device can cancel a sale), service worker / installable app and offline start (Phase 7), cloud sync (Phase 9).

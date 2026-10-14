@@ -11,7 +11,7 @@
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>PROTOTYPE (Phase 4)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. There is no backup yet, so clearing browser data would delete them. Expenses, reports and backup are not built yet.
+    <strong>PROTOTYPE (Phase 5)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. There is no backup yet, so clearing browser data would delete them. Backup is not built yet.
   </div>
 
   <div class="app">
@@ -24,7 +24,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 4 &middot; Prototype</p>
+      <p class="sidebar-note">Phase 5 &middot; Prototype</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -57,8 +57,8 @@
               <span>Period</span>
               <select id="dateFilter">
                 <option value="today" selected>Today</option>
-                <option value="week" disabled>This week (Phase 5)</option>
-                <option value="month" disabled>This month (Phase 5)</option>
+                <option value="week" disabled>This week (see Reports)</option>
+                <option value="month" disabled>This month (see Reports)</option>
               </select>
             </label>
           </div>
@@ -66,7 +66,7 @@
           <div class="quick-actions" aria-label="Quick actions">
             <button class="btn btn-primary" data-go="sale">+ New Sale</button>
             <button class="btn" data-go="products" data-action="add-product">+ Add Product</button>
-            <button class="btn" data-go="expenses">+ Add Expense</button>
+            <button class="btn" data-go="expenses" data-action="add-expense">+ Add Expense</button>
             <button class="btn" data-go="customers">Customers</button>
           </div>
 
@@ -312,21 +312,40 @@
         <section class="view" id="view-expenses" aria-labelledby="h-expenses" hidden>
           <div class="page-head">
             <h1 id="h-expenses">Expenses</h1>
-            <button class="btn btn-primary" disabled>+ Add Expense</button>
+            <button class="btn btn-primary" type="button" id="exAdd">+ Add Expense</button>
           </div>
-          <div class="empty-state">
-            <h2>No expenses recorded</h2>
-            <p>Rent, electricity, wages and more will be tracked here (Phase 5).</p>
+          <div id="exError" class="alert" role="alert" hidden></div>
+          <div class="toolbar">
+            <label class="grow"><span class="sr-only">Search expenses</span><input type="search" id="exSearch" placeholder="Search description or notes" autocomplete="off"></label>
+            <label><span class="sr-only">Category</span><select id="exCat"><option value="">All categories</option></select></label>
+            <label class="field-sm">From<input type="date" id="exFrom"></label>
+            <label class="field-sm">To<input type="date" id="exTo"></label>
+            <label><span class="sr-only">Status</span>
+              <select id="exStatus"><option value="active" selected>Active</option><option value="void">Voided</option><option value="all">All</option></select>
+            </label>
+            <button class="btn" type="button" id="exClear">Clear filters</button>
           </div>
+          <p class="muted" id="exCount" aria-live="polite"></p>
+          <div id="exList"></div>
+          <p class="card-hint">Expenses are never deleted. A wrong entry is voided with a reason and stays in the history.</p>
         </section>
 
         <!-- REPORTS -->
         <section class="view" id="view-reports" aria-labelledby="h-reports" hidden>
           <div class="page-head"><h1 id="h-reports">Reports</h1></div>
-          <div class="empty-state">
-            <h2>Reports need real data</h2>
-            <p>Sales, profit estimates, inventory value and credit reports arrive in Phase 5.</p>
+          <div class="toolbar">
+            <label><span class="sr-only">Period</span>
+              <select id="rpKind"><option value="today" selected>Today</option><option value="week">This week (Mon to today)</option><option value="month">This month</option><option value="custom">Custom range</option></select>
+            </label>
+            <span id="rpCustom" class="toolbar" hidden style="margin:0">
+              <label class="field-sm">From<input type="date" id="rpFrom"></label>
+              <label class="field-sm">To<input type="date" id="rpTo"></label>
+            </span>
           </div>
+          <p class="muted" id="rpNote" aria-live="polite"></p>
+          <div class="cards" id="rpCards"></div>
+          <div class="panel" id="rpCat" style="margin-top:1rem"></div>
+          <div class="note-box"><strong>How to read this:</strong> Sales is the value of bills made. Money received is separate: it includes customer repayments, which are never counted as sales. Gross profit and the net result appear only when every sale in the period has a saved cost; they are before any tax you owe and are not a statement for filing.</div>
         </section>
 
         <!-- SETTINGS -->
@@ -622,6 +641,49 @@
     </form>
   </dialog>
 
+  <!-- Phase 5: expense dialogs -->
+  <dialog id="expDialog" aria-labelledby="exTitle">
+    <form id="exForm" novalidate>
+      <h2 id="exTitle">Add expense</h2>
+      <div id="exBanner" class="alert" role="alert" hidden></div>
+      <div class="form-grid">
+        <label class="span2">Description *
+          <input id="exDesc" type="text" maxlength="120" autocomplete="off"><span class="err" id="e-exDesc"></span>
+        </label>
+        <label>Category *
+          <select id="exCategory"></select><span class="err" id="e-exCategory"></span>
+        </label>
+        <label>Amount (&#8377;) *
+          <input id="exAmount" type="text" inputmode="decimal" autocomplete="off"><span class="err" id="e-exAmount"></span>
+        </label>
+        <label>Date *
+          <input id="exDate" type="date"><span class="err" id="e-exDate"></span>
+        </label>
+        <label>Paid by
+          <select id="exMethod"></select><span class="err" id="e-exMethod"></span>
+        </label>
+        <label class="span2">Notes (optional)
+          <textarea id="exNotes" maxlength="300" rows="2"></textarea><span class="err" id="e-exNotes"></span>
+        </label>
+      </div>
+      <div class="dlg-foot">
+        <button class="btn btn-danger" type="button" id="exVoid" hidden>Void expense</button>
+        <button class="btn" type="button" id="exCancel">Cancel</button>
+        <button class="btn btn-primary" type="submit" id="exSave">Save expense</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="exdDialog" aria-labelledby="exdTitle">
+    <div class="dlg-head">
+      <h2 id="exdTitle"></h2>
+      <button class="icon-btn" type="button" id="exdClose" aria-label="Close"><span aria-hidden="true">&#10005;</span></button>
+    </div>
+    <dl class="kv" id="exdInfo"></dl>
+    <h3>History</h3>
+    <ul class="hist" id="exdHist"></ul>
+  </dialog>
+
   <div id="printArea" aria-hidden="true"></div>
   <style id="pageStyle"></style>
 
@@ -642,6 +704,8 @@
   <script src="js/history.js"></script>
   <script src="js/customers.js"></script>
   <script src="js/billing.js"></script>
+  <script src="js/expenses.js"></script>
+  <script src="js/reports.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
