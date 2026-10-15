@@ -195,7 +195,7 @@
 
   async function onVoid() {
     if (fm.busy || !fm.editId) return;
-    const reason = window.prompt("Void this expense? It stays in the history but no longer counts in reports.\n\nReason (required):");
+    const reason = await U.ask("Void this expense? It stays in the history but no longer counts in reports.\n\nType a reason (required):", "Void expense", true);
     if (reason === null) return;
     if (!reason.trim()) { $("exBanner").textContent = "A reason is required to void an expense."; $("exBanner").hidden = false; return; }
     fm.busy = true;

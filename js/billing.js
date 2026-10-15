@@ -133,6 +133,9 @@
 
   function renderCart() {
     const wrap = $("sCart");
+    // Removing a focused quantity box fires blur (and a pending "change") in the middle of replaceChildren,
+    // which re-entered this function and threw. Blur first so the pending change is handled before we rebuild.
+    if (wrap.contains(document.activeElement)) document.activeElement.blur();
     wrap.replaceChildren();
     if (!state.cart.length) { wrap.append(el("p", "muted", "No items yet. Search above and tap Add.")); return; }
     cartLines().forEach((l, i) => {
@@ -341,12 +344,12 @@
     const v = validateBill();
     if (v.errs.length) { showMessages(v.errs); return; }
     showMessages([]);
+    setBusy(true); // also blocks a second click while the confirmation is open
     if (v.dueP > 0) {
       // credit adds to what the customer owes, so the shopkeeper confirms it first
-      const ok = window.confirm("Put " + U.money2(v.dueP / 100) + " on credit (udhaar) for " + v.customer.name + "?\n\nThis adds to the amount they owe you.");
-      if (!ok) return;
+      const ok = await U.ask("Put " + U.money2(v.dueP / 100) + " on credit (udhaar) for " + v.customer.name + "?\n\nThis adds to the amount they owe you.", "Put on credit");
+      if (!ok) { setBusy(false); return; }
     }
-    setBusy(true);
     try {
       const sale = await window.DukaanSales.complete({
         id: state.saleId, items: v.items, discount: v.extras.discount, taxRate: v.extras.tax,
@@ -457,9 +460,9 @@
     });
 
     $("sComplete").addEventListener("click", onComplete);
-    $("sClear").addEventListener("click", () => {
+    $("sClear").addEventListener("click", async () => {
       if (!state.cart.length) { newBill(); return; }
-      if (window.confirm("Clear this bill? The items and payments you entered will be removed.")) newBill();
+      if (await U.ask("Clear this bill? The items and payments you entered will be removed.", "Clear bill")) newBill();
     });
 
     document.addEventListener("products-changed", renderAll);

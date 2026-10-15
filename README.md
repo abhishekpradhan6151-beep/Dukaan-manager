@@ -1,4 +1,4 @@
-# Dukaan Manager (Phase 6: Backup & Restore)
+# Dukaan Manager (Phase 7: Audit, Fixes & Reliability)
 
 Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and JavaScript, no build step.
 
@@ -8,6 +8,7 @@ Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and Ja
 - **Phase 3** done: billing, sales history, receipt and invoice printing, shop details for receipts.
 - **Phase 4** done: customers, udhaar ledger, repayments, linking earlier credit sales.
 - **Phase 5** done: expenses and date-filtered reports.
+- **Phase 7** done: full audit and reliability fixes (see below). No new features.
 - **Phase 6** done: backup export and full-replacement restore (Settings).
 - Everything shown is real data saved on this device. There is no sample data any more.
 
@@ -18,6 +19,13 @@ Serve the folder (browser storage is most reliable on http://localhost):
     python3 -m http.server 8000
 
 then open http://localhost:8000. Opening `index.html` directly may work, but some browsers restrict storage for `file://` pages.
+
+## Phase 7 changes
+- Confirmations and the expense-void reason now use an in-app dialog (`DukaanUtil.ask`) instead of the browser's own confirm()/prompt(). Browsers, embedded views and preview frames can silently block those popups, which made credit sales, Clear bill, archive, link, restore, and expense void do nothing. No business rule changed.
+- Fixed a JavaScript error when a cart quantity box was edited and the cart redrew (billing).
+- Backup restore now also rejects a file whose numbering counters are behind its records (it would repeat invoice numbers).
+- Added an inline favicon so browsers stop requesting a missing `favicon.ico` (a 404 in the console).
+- Not changed: there is still no service worker, so the app must be opened once with a connection (or a local server); after it has loaded it works offline.
 
 ## Using Phase 6 (backup and restore)
 - **Settings > Backup & restore > Download backup**: saves one JSON file (`dukaan-backup-<shop>-<date>.json`) with products, stock history, sales, customers, ledger, repayments, expenses, counters and settings, plus format version, database version and date. It is read from one consistent snapshot and does not change your data. The file is **not encrypted** and holds private customer and business data. Copy it somewhere safe; nothing is backed up automatically and there is no cloud sync.

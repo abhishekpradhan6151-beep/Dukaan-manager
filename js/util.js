@@ -82,6 +82,33 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  /*
+   * ask(message, okLabel) - an in-page replacement for window.confirm(). The browser's own confirm()
+   * is silently answered "No" in embedded browsers, preview frames and when a page has dialogs blocked,
+   * which made Save / Complete sale / Archive do nothing. Resolves true only when OK is pressed.
+   */
+  function ask(message, okLabel, withReason) {
+    const d = $("askDialog");
+    if (!d || typeof d.showModal !== "function") return Promise.resolve(withReason ? window.prompt(message) : window.confirm(message));
+    return new Promise((resolve) => {
+      $("askMsg").textContent = message;
+      $("askOk").textContent = okLabel || "OK";
+      $("askInput").hidden = !withReason; $("askInput").value = "";
+      let answer = false;
+      const ok = () => { answer = true; d.close(); };
+      const no = () => d.close();
+      $("askOk").addEventListener("click", ok);
+      $("askNo").addEventListener("click", no);
+      d.addEventListener("close", () => {
+        $("askOk").removeEventListener("click", ok);
+        $("askNo").removeEventListener("click", no);
+        resolve(withReason ? (answer ? $("askInput").value.trim() : null) : answer);
+      }, { once: true });
+      d.showModal();
+      if (withReason) $("askInput").focus(); else $("askNo").focus();
+    });
+  }
+
   let toastTimer = null;
   function toast(msg) {
     const t = $("toast");
@@ -93,7 +120,7 @@
 
   window.DukaanUtil = {
     $, el, round, money, money2, qty, dateTime, dateKey, todayKey,
-    parseMoney, parseQty, parsePercent, METHODS, METHOD_SHORT, paymentSummary, toast,
+    parseMoney, parseQty, parsePercent, METHODS, METHOD_SHORT, paymentSummary, toast, ask,
     csvCell, toCsv, downloadCsv
   };
 })();

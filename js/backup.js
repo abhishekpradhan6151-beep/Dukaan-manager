@@ -87,6 +87,12 @@
       const seen = new Set();
       for (const r of b.stores[s]) { if (seen.has(r[f])) return bad("Two records in " + LABELS[s] + " share the number “" + r[f] + "”."); seen.add(r[f]); }
     }
+    // numbering counters must not be behind the records, or the next invoice/repayment/ledger number would repeat
+    const cnt = {}; b.stores.counters.forEach((c) => { cnt[c.name] = c.value; });
+    const maxNum = (rows, f) => rows.reduce((m, r) => { const x = /(\d+)$/.exec(String(r[f])); return x ? Math.max(m, Number(x[1])) : m; }, 0);
+    const behind = [["invoice", maxNum(b.stores.sales, "invoiceNo")], ["repayment", maxNum(b.stores.repayments, "refNo")], ["ledger", b.stores.ledger.reduce((m, r) => Math.max(m, isNum(r.seq) ? r.seq : 0), 0)]]
+      .filter(([k, mx]) => mx > 0 && !(cnt[k] >= mx));
+    if (behind.length) return bad("The numbering counters (" + behind.map((x) => x[0]).join(", ") + ") are behind the saved records, so new bills could repeat old numbers. The backup is inconsistent and was not restored.");
     // links between records
     const link = (s, f, target, optional) => {
       for (const r of b.stores[s]) {
@@ -214,7 +220,7 @@
 
   async function doRestore() {
     if (ui.busy || !ui.backup || !$("bkAck").checked) return;
-    if (!window.confirm("Replace ALL current shop data with this backup?\n\nProducts, sales, customers, expenses and settings now on this device will be replaced. This cannot be undone.")) return;
+    if (!(await U.ask("Replace ALL current shop data with this backup?\n\nProducts, sales, customers, expenses and settings now on this device will be replaced. This cannot be undone.", "Replace my data"))) return;
     ui.busy = true; $("bkRestore").disabled = true; setMsg("Restoring… do not close this page.");
     const backup = ui.backup;
     try {

@@ -407,8 +407,8 @@
     if (Object.keys(res.errs).length) { showErrors(res.errs); return; }
 
     const dup = skuTaken(v.sku, state.editingId);
-    if (dup && !window.confirm("Another product (“" + dup.name + "”) already uses the SKU “" + v.sku + "”. Save anyway?")) return;
-    if (res.vals.price < res.vals.cost && !window.confirm("The selling price (" + moneyFmt.format(res.vals.price) + ") is lower than the purchase cost (" + moneyFmt.format(res.vals.cost) + "). Save anyway?")) return;
+    if (dup && !(await window.DukaanUtil.ask("Another product (“" + dup.name + "”) already uses the SKU “" + v.sku + "”. Save anyway?", "Save anyway"))) return;
+    if (res.vals.price < res.vals.cost && !(await window.DukaanUtil.ask("The selling price (" + moneyFmt.format(res.vals.price) + ") is lower than the purchase cost (" + moneyFmt.format(res.vals.cost) + "). Save anyway?", "Save anyway"))) return;
 
     const fields = {
       name: v.name, sku: v.sku, barcode: v.barcode, category: v.category || "General", unit: v.unit,
@@ -552,7 +552,7 @@
     const p = state.products.find((x) => x.id === id);
     if (!p) return;
     const archiving = p.status === "active";
-    if (archiving && !window.confirm("Archive “" + p.name + "”? It will be hidden from the active list and cannot be sold. Its history is kept and you can restore it later.")) return;
+    if (archiving && !(await window.DukaanUtil.ask("Archive “" + p.name + "”? It will be hidden from the active list and cannot be sold. Its history is kept and you can restore it later.", "Archive"))) return;
     try {
       await setStatus(id, archiving ? "archived" : "active");
       toast(archiving ? "Product archived." : "Product restored.");

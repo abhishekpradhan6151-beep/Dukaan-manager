@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#14532d">
   <title>Dukaan Manager</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>PROTOTYPE (Phase 6)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. Download a backup from Settings regularly: clearing browser data deletes everything here.
+    <strong>PROTOTYPE (Phase 7)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. Download a backup from Settings regularly: clearing browser data deletes everything here.
   </div>
 
   <div class="app">
@@ -24,7 +25,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 6 &middot; Prototype</p>
+      <p class="sidebar-note">Phase 7 &middot; Prototype</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -698,6 +699,15 @@
     <dl class="kv" id="exdInfo"></dl>
     <h3>History</h3>
     <ul class="hist" id="exdHist"></ul>
+  </dialog>
+
+  <dialog id="askDialog" aria-labelledby="askMsg">
+    <p id="askMsg" style="white-space:pre-line"></p>
+    <input id="askInput" type="text" maxlength="200" autocomplete="off" aria-label="Reason" hidden>
+    <div class="dlg-foot">
+      <button class="btn" type="button" id="askNo">Cancel</button>
+      <button class="btn btn-primary" type="button" id="askOk">OK</button>
+    </div>
   </dialog>
 
   <div id="printArea" aria-hidden="true"></div>

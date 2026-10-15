@@ -433,7 +433,7 @@
     } else {
       msg = "Restore " + c.name + " so they can be used on new bills again?";
     }
-    if (!window.confirm(msg)) return;
+    if (!(await U.ask(msg, archiving ? "Archive" : "Restore"))) return;
     try {
       await L().setCustomerStatus(c.id, archiving ? "archived" : "active");
       await L().refresh();
@@ -682,7 +682,7 @@
     });
     if (!plan.length) { errorBox($("lkError"), "Nothing selected. Choose a customer, or close this window to skip."); return; }
     const n = plan.reduce((a, g) => a + g.saleIds.length, 0);
-    if (!window.confirm("Link " + n + (n === 1 ? " credit sale" : " credit sales") + " to customers?\n\nThis adds their unpaid amounts to those customers’ ledgers. Sale amounts do not change.")) return;
+    if (!(await U.ask("Link " + n + (n === 1 ? " credit sale" : " credit sales") + " to customers?\n\nThis adds their unpaid amounts to those customers’ ledgers. Sale amounts do not change.", "Link"))) return;
     $("lkSave").disabled = true;
     try {
       const res = await L().linkLegacy(plan);
