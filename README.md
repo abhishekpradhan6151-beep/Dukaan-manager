@@ -1,4 +1,4 @@
-# Dukaan Manager (Phase 7: Audit, Fixes & Reliability)
+# Dukaan Manager (Phase 8: Smart Inventory Alerts & Stock Management)
 
 Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and JavaScript, no build step.
 
@@ -10,6 +10,7 @@ Offline-first shop management app for Indian shopkeepers. Plain HTML, CSS and Ja
 - **Phase 5** done: expenses and date-filtered reports.
 - **Phase 7** done: full audit and reliability fixes (see below). No new features.
 - **Phase 6** done: backup export and full-replacement restore (Settings).
+- **Phase 8** done: low-stock and out-of-stock alerts, Stock Alerts page, safer stock adjustments (see below).
 - Everything shown is real data saved on this device. There is no sample data any more.
 
 ## Run it
@@ -19,6 +20,26 @@ Serve the folder (browser storage is most reliable on http://localhost):
     python3 -m http.server 8000
 
 then open http://localhost:8000. Opening `index.html` directly may work, but some browsers restrict storage for `file://` pages.
+
+## Phase 8: stock alerts and adjustments
+**Alert level.** Every product has its own "Low-stock alert at or below" number (Products > Add / Edit). A product with no level saved (an older or restored record) uses the default of **5**; the form, product details and Stock Alerts page say "default" for it. A level of 0 means "no low-stock warning, only out of stock".
+
+**Two separate statuses** (archived products never alert):
+- **Low stock**: stock is above 0 and at or below the alert level.
+- **Out of stock**: stock is 0.
+The dashboard shows two cards, "Low stock" and "Out of stock". Zero stock is counted only as out of stock, never also as low (in Phase 7 the single "Low stock" card included zero stock).
+
+**Stock Alerts page** (sidebar, or the dashboard button): product, current stock, alert level and status; out-of-stock items first. Search by name, SKU or barcode, filter Low / Out, filter by category. Each row has **Adjust stock** and **Edit alert level**. "Recent stock movements" lists the latest 30 changes (sales, cancellations, adjustments, opening stock). The list redraws by itself after a sale, a cancellation, an adjustment, an edit, archive/restore or a backup restore.
+
+**Adjusting stock** (Products > Adjust, or the Stock Alerts page): choose Add or Remove, enter a quantity above 0, and choose a **reason** (required; "Other" also needs a note). Stock cannot go below zero, whole-number units refuse decimals, and the dialog previews the new stock and status. Stock and its history entry are saved in ONE transaction; "Stock updated" appears only after it commits, with a reference such as `ADJ-1A2B3C4D`. Each opened form has its own operation id, so repeated clicks or a resent form save only once. Adjustments only change the product and add a history entry: sales, receipts and old history are never rewritten, and sales/cancellations keep using the same single stock routine (a cancelled sale returns stock once).
+
+**Not added**: push/SMS/email alerts, cloud sync, automatic reordering, per-category default levels.
+
+## Tests (Phase 8)
+`tests/phase8.test.js` runs Chromium through Playwright against a local copy, each group in its own empty browser profile (your real data is never used):
+
+    NODE_PATH=/path/to/node_modules node tests/phase8.test.js
+    PHASE7_DIR=/path/to/unzipped-phase7-folder   (optional; enables the Phase 7 to 8 upgrade test)
 
 ## Phase 7 changes
 - Confirmations and the expense-void reason now use an in-app dialog (`DukaanUtil.ask`) instead of the browser's own confirm()/prompt(). Browsers, embedded views and preview frames can silently block those popups, which made credit sales, Clear bill, archive, link, restore, and expense void do nothing. No business rule changed.
@@ -75,14 +96,16 @@ then open http://localhost:8000. Opening `index.html` directly may work, but som
 - `js/customers.js` Customers screens, repayment and linking dialogs (Phase 4)
 - `js/util.js` shared helpers (formatting, parsing, toast)
 - `js/settings.js` shop details
-- `js/products.js` products and inventory (Phase 2)
+- `js/products.js` products and inventory (Phase 2); alert rules and safe stock adjustment (Phase 8)
+- `js/alerts.js` Stock Alerts page and recent stock movements (Phase 8)
+- `tests/phase8.test.js` browser tests for Phase 8 and a Phase 1 to 7 regression
 - `js/sales.js` sale rules: totals, complete, cancel, dashboard numbers
 - `js/billing.js` New Sale screen
 - `js/history.js` Sales History, sale details, cancellation
 - `js/receipt.js` receipt and A4 invoice building and printing
 
 ## Data stored (IndexedDB database `dukaan-manager`, version 4)
-`products`, `stockHistory`, `sales` (with line items, payments, event log), `counters` (invoice, repayment and ledger numbers), `settings`, and from Phase 4: `customers`, `ledger`, `repayments`, and from Phase 5: `expenses`.
+`products` (each with `lowStockThreshold`), `stockHistory` (manual adjustments also carry a `ref`; the entry id is the operation id), `sales` (with line items, payments, event log), `counters` (invoice, repayment and ledger numbers), `settings`, and from Phase 4: `customers`, `ledger`, `repayments`, and from Phase 5: `expenses`.
 
 ## Ledger rules
 - A customer's balance is the sum of their ledger entries (debit = owes more, credit = owes less). It is never stored or typed over.

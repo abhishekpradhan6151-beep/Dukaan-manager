@@ -26,7 +26,7 @@
   const ADD_REASONS = ["Stock received (purchase)", "Customer return", "Count correction", "Other"];
   const REMOVE_REASONS = ["Damaged", "Expired", "Lost or stolen", "Used in shop", "Count correction", "Other"];
 
-  const state = { products: [], shown: PAGE_SIZE, saving: false, loaded: false, failed: false, editingId: null, adjustId: null, detailId: null };
+  const state = { products: [], shown: PAGE_SIZE, saving: false, loaded: false, failed: false, editingId: null, adjustId: null, adjustOp: null, detailId: null };
 
   const $ = (id) => document.getElementById(id);
   function el(tag, cls, text) {
@@ -49,11 +49,27 @@
   function parseMoney(s) { s = String(s).trim(); return /^\d{1,9}(\.\d{1,2})?$/.test(s) ? Number(s) : NaN; }
   function parseQty(s) { s = String(s).trim(); return /^\d{1,7}(\.\d{1,3})?$/.test(s) ? Number(s) : NaN; }
 
-  const isLow = (p) => p.status === "active" && p.stock <= p.lowStockThreshold;
+  /*
+   * Alert level (Phase 8). Each product keeps its own minimum stock in lowStockThreshold.
+   * A product with no valid saved level (older or restored records) uses DEFAULT_LOW_STOCK,
+   * and the screens say so. 0 means "no low-stock warning, only out of stock".
+   * Status: "inactive" (archived: never alerts), "out" (stock is 0), "low" (at or below the
+   * level), "ok". Low and out of stock are always counted separately.
+   */
+  const hasOwnThreshold = (p) => typeof p.lowStockThreshold === "number" && Number.isFinite(p.lowStockThreshold) && p.lowStockThreshold >= 0;
+  const thresholdOf = (p) => (hasOwnThreshold(p) ? p.lowStockThreshold : DEFAULT_LOW_STOCK);
+  function statusOf(p) {
+    if (p.status !== "active") return "inactive";
+    if (!(p.stock > 0)) return "out";
+    if (p.stock <= thresholdOf(p)) return "low";
+    return "ok";
+  }
+  const needsAlert = (p) => { const s = statusOf(p); return s === "low" || s === "out"; };
 
   function stockState(p) {
-    if (p.stock <= 0) return { label: "Out of stock", cls: "out" };
-    if (p.stock <= p.lowStockThreshold) return { label: "Low stock", cls: "credit" };
+    const s = statusOf(p);
+    if (s === "out") return { label: "Out of stock", cls: "out" };
+    if (s === "low") return { label: "Low stock", cls: "credit" };
     return { label: "In stock", cls: "" };
   }
 
@@ -93,20 +109,38 @@
     });
   }
 
-  // signedQty is positive to add stock, negative to remove it.
-  function adjustStock(id, signedQty, reason, note) {
+  /*
+   * signedQty is positive to add stock, negative to remove it. The product and its history entry change in ONE
+   * transaction, so stock never changes without a record. opId (Phase 8) is an id made when the adjust form was
+   * opened and is used as the history entry's id: if it is already saved, this is a repeated submit and nothing
+   * changes. Old sales and their stock entries are never touched. Resolves { duplicate, before, after, ref }.
+   */
+  function adjustStock(id, signedQty, reason, note, opId) {
     return DB.run(["products", "stockHistory"], "readwrite", async (tx) => {
       const store = tx.objectStore("products");
+      const hist = tx.objectStore("stockHistory");
+      if (opId) {
+        const done = await DB.req(hist.get(opId));
+        if (done) return { duplicate: true, before: done.before, after: done.after, ref: done.ref || "" };
+      }
+      if (typeof signedQty !== "number" || !Number.isFinite(signedQty) || signedQty === 0) throw new Error("Enter a quantity greater than 0.");
+      if (Math.abs(signedQty) > 9999999 || round(signedQty, 3) !== signedQty) throw new Error("Quantity is too large or has more than 3 decimals.");
+      if (!String(reason || "").trim()) throw new Error("A reason is required for every stock adjustment.");
       const cur = await DB.req(store.get(id));
       if (!cur) throw new Error("Product not found. It may have been removed.");
       if (cur.status !== "active") throw new Error("Archived products cannot be adjusted. Restore the product first.");
+      if (!unitInfo(cur.unit).decimal && !Number.isInteger(signedQty)) throw new Error("This product is counted in whole numbers.");
       const before = cur.stock;
       const after = round(before + signedQty, 3);
       if (after < 0) throw new Error("Stock cannot go below zero. Current stock is " + fmtQty(before, cur.unit) + ".");
       cur.stock = after;
       cur.updatedAt = DB.now();
       store.put(cur);
-      tx.objectStore("stockHistory").add(historyEntry(cur, before, after, reason, note, "adjustment"));
+      const entry = historyEntry(cur, before, after, String(reason).trim(), note, "adjustment");
+      if (opId) entry.id = opId;
+      entry.ref = "ADJ-" + entry.id.replace(/-/g, "").slice(0, 8).toUpperCase();
+      hist.add(entry);
+      return { duplicate: false, before: before, after: after, ref: entry.ref };
     });
   }
 
@@ -174,7 +208,7 @@
   function toCsv() {
     const head = ["ID", "Name", "SKU", "Barcode", "Category", "Unit", "Purchase cost", "Selling price", "Stock", "Low-stock threshold", "Description", "Status", "Created", "Updated"];
     const rows = state.products.slice().sort((a, b) => a.name.localeCompare(b.name)).map((p) =>
-      [p.id, p.name, p.sku, p.barcode, p.category, p.unit, p.cost, p.price, p.stock, p.lowStockThreshold, p.description, p.status, p.createdAt, p.updatedAt]);
+      [p.id, p.name, p.sku, p.barcode, p.category, p.unit, p.cost, p.price, p.stock, thresholdOf(p), p.description, p.status, p.createdAt, p.updatedAt]);
     return [head].concat(rows).map((r) => r.map(csvCell).join(",")).join("\r\n");
   }
 
@@ -222,7 +256,7 @@
     let list = state.products.filter((p) => {
       if (st !== "all" && p.status !== st) return false;
       if (cat && p.category !== cat) return false;
-      if (low && !isLow(p)) return false;
+      if (low && !needsAlert(p)) return false;
       if (q && ![p.name, p.sku, p.barcode].join(" ").toLowerCase().includes(q)) return false;
       return true;
     });
@@ -367,7 +401,7 @@
     UNITS.forEach((u) => sel.append(new Option(u.label, u.id)));
   }
 
-  function openForm(p) {
+  function openForm(p, focusId) {
     const form = $("productForm");
     form.reset();
     clearErrors(form);
@@ -377,17 +411,19 @@
     $("pdSave").textContent = p ? "Save changes" : "Save product";
     $("gOpening").hidden = !!p;
     $("stockNote").hidden = !p;
+    $("lowHint").textContent = "You get a “Low stock” warning when stock is at or below this number, and “Out of stock” at 0. Use 0 for no low-stock warning. Products with no level saved use " + DEFAULT_LOW_STOCK + ".";
+    if (p && !hasOwnThreshold(p)) $("lowHint").textContent += " This product had no level saved, so " + DEFAULT_LOW_STOCK + " is shown. Save to keep it.";
     if (p) {
       $("fName").value = p.name; $("fSku").value = p.sku; $("fBarcode").value = p.barcode;
       $("fCategory").value = p.category; $("fUnit").value = p.unit;
-      $("fCost").value = p.cost; $("fPrice").value = p.price; $("fLow").value = p.lowStockThreshold;
+      $("fCost").value = p.cost; $("fPrice").value = p.price; $("fLow").value = thresholdOf(p);
       $("fDesc").value = p.description;
       $("stockNote").textContent = "Current stock: " + fmtQty(p.stock, p.unit) + ". Editing details never changes stock. Use “Adjust stock” to change it, so the change is recorded.";
     } else {
       $("fUnit").value = "piece"; $("fLow").value = String(DEFAULT_LOW_STOCK); $("fOpening").value = "0";
     }
     $("productDialog").showModal();
-    $("fName").focus();
+    $(focusId || "fName").focus();
   }
 
   async function onProductSubmit(e) {
@@ -448,7 +484,7 @@
     const out = $("adPreview");
     if (Number.isNaN(q)) { out.textContent = ""; return; }
     const after = round(p.stock + ($("aDir").value === "add" ? q : -q), 3);
-    out.textContent = after < 0 ? "This would take stock below zero." : "Stock after this change: " + fmtQty(after, p.unit);
+    out.textContent = after < 0 ? "This would take stock below zero." : "Stock after this change: " + fmtQty(after, p.unit) + " (" + stockState(Object.assign({}, p, { stock: after })).label + ")";
   }
   function openAdjust(p) {
     const form = $("adjustForm");
@@ -456,6 +492,7 @@
     clearErrors(form);
     showBanner("adError", "");
     state.adjustId = p.id;
+    state.adjustOp = DB.uid(); // one id per opened form: a repeated submit of this form saves only once
     $("adTitle").textContent = "Adjust stock: " + p.name;
     $("adCurrent").textContent = "Current stock: " + fmtQty(p.stock, p.unit);
     $("adPreview").textContent = "";
@@ -484,9 +521,10 @@
 
     setBusy($("adSave"), true, "Save adjustment");
     try {
-      await adjustStock(p.id, dir === "add" ? q : -q, reason, note);
+      const r = await adjustStock(p.id, dir === "add" ? q : -q, reason, note, state.adjustOp);
       $("adjustDialog").close();
-      toast("Stock updated and recorded in history.");
+      toast(r.duplicate ? "This adjustment was already saved. Stock was not changed again."
+        : "Stock updated: " + qtyFmt.format(r.before) + " → " + qtyFmt.format(r.after) + " " + p.unit + ". Recorded as " + r.ref + ".");
       await refresh();
       if (state.detailId === p.id) openDetail(p.id);
     } catch (err) {
@@ -508,7 +546,7 @@
     dl.replaceChildren();
     const rows = [
       ["Stock", fmtQty(p.stock, p.unit)],
-      ["Low-stock alert at", fmtQty(p.lowStockThreshold, p.unit)],
+      ["Low-stock alert at", fmtQty(thresholdOf(p), p.unit) + (hasOwnThreshold(p) ? "" : " (default, none saved)")],
       ["Selling price", moneyFmt.format(p.price) + " per " + p.unit],
       ["Purchase cost", moneyFmt.format(p.cost) + " per " + p.unit],
       ["Category", p.category],
@@ -635,8 +673,17 @@
       if (state.failed) return { failed: true };
       if (!state.loaded) return null;
       const active = state.products.filter((p) => p.status === "active");
-      return { total: active.length, low: active.filter(isLow).length };
+      // Phase 8: low (above zero, at or below the level) and out (zero) are counted separately.
+      return { total: active.length, low: active.filter((p) => statusOf(p) === "low").length, out: active.filter((p) => statusOf(p) === "out").length };
     },
+    // Phase 8: shared alert rules and entry points for the Stock Alerts page.
+    statusOf: statusOf,
+    thresholdOf: thresholdOf,
+    hasOwnThreshold: hasOwnThreshold,
+    DEFAULT_LOW_STOCK: DEFAULT_LOW_STOCK,
+    adjust: adjustStock,
+    openAdjust: (id) => { const p = state.products.find((x) => x.id === id); if (p && p.status === "active") openAdjust(p); },
+    openEdit: (id, focusId) => { const p = state.products.find((x) => x.id === id); if (p && p.status === "active") openForm(p, focusId); },
     toCsv: toCsv,
     _validate: validateProduct,
     // Added in Phase 3 so billing can read the same product list and unit rules:

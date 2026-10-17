@@ -12,7 +12,7 @@
   <a class="skip-link" href="#main">Skip to main content</a>
 
   <div class="demo-banner" role="note">
-    <strong>PROTOTYPE (Phase 7)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. Download a backup from Settings regularly: clearing browser data deletes everything here.
+    <strong>PROTOTYPE (Phase 8)</strong> &mdash; Products, sales, customers and udhaar records are saved only in this browser on this device. Download a backup from Settings regularly: clearing browser data deletes everything here.
   </div>
 
   <div class="app">
@@ -25,7 +25,7 @@
       <nav>
         <ul class="nav-list" id="navList"></ul>
       </nav>
-      <p class="sidebar-note">Phase 7 &middot; Prototype</p>
+      <p class="sidebar-note">Phase 8 &middot; Prototype</p>
     </aside>
     <div class="scrim" id="scrim" hidden></div>
 
@@ -69,6 +69,7 @@
             <button class="btn" data-go="products" data-action="add-product">+ Add Product</button>
             <button class="btn" data-go="expenses" data-action="add-expense">+ Add Expense</button>
             <button class="btn" data-go="customers">Customers</button>
+            <button class="btn" data-go="alerts">Stock Alerts</button>
           </div>
 
           <h2 class="section-title">Today&rsquo;s money &amp; sales</h2>
@@ -188,11 +189,38 @@
                 <option value="updated-desc">Recently changed</option>
               </select>
             </label>
-            <label class="check"><input type="checkbox" id="pLow"> Low stock only</label>
+            <label class="check"><input type="checkbox" id="pLow"> Low or out of stock only</label>
           </div>
           <p class="muted" id="pCount" aria-live="polite"></p>
           <div id="pList"></div>
           <div class="center"><button class="btn" type="button" id="pMore" hidden>Show more</button></div>
+        </section>
+
+        <!-- STOCK ALERTS (Phase 8) -->
+        <section class="view" id="view-alerts" aria-labelledby="h-alerts" hidden>
+          <div class="page-head">
+            <h1 id="h-alerts">Stock Alerts</h1>
+          </div>
+          <div id="alError" class="alert" role="alert" hidden></div>
+          <div class="cards" id="alCards"></div>
+          <p class="note-box" id="alInfo"></p>
+          <div class="toolbar">
+            <label class="grow"><span class="sr-only">Search alerts</span><input type="search" id="alSearch" placeholder="Search alerts by name, SKU or barcode" autocomplete="off"></label>
+            <label><span class="sr-only">Alert type</span>
+              <select id="alStatus">
+                <option value="all" selected>Low and out of stock</option>
+                <option value="low">Low stock only</option>
+                <option value="out">Out of stock only</option>
+              </select>
+            </label>
+            <label><span class="sr-only">Category</span><select id="alCategory"><option value="">All categories</option></select></label>
+          </div>
+          <p class="muted" id="alCount" aria-live="polite"></p>
+          <div id="alList"></div>
+          <details class="panel" id="alMoves">
+            <summary><strong>Recent stock movements</strong> (sales, cancellations, adjustments)</summary>
+            <div id="alMovesBody"></div>
+          </details>
         </section>
 
         <!-- SALES HISTORY -->
@@ -456,7 +484,8 @@
           <span class="err" id="e-fOpening"></span>
         </label>
         <label>Low-stock alert at or below *
-          <input id="fLow" type="text" inputmode="decimal" autocomplete="off">
+          <input id="fLow" type="text" inputmode="decimal" autocomplete="off" aria-describedby="lowHint">
+          <span class="card-hint" id="lowHint"></span>
           <span class="err" id="e-fLow"></span>
         </label>
         <p class="note-box span2" id="stockNote" hidden></p>
@@ -733,6 +762,7 @@
   <script src="js/expenses.js"></script>
   <script src="js/reports.js"></script>
   <script src="js/backup.js"></script>
+  <script src="js/alerts.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

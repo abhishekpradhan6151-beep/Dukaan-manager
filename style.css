@@ -328,3 +328,15 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 /* ===== Phase 5: expenses, reports ===== */
 tr.voided td, .tx-item.voided { opacity: .6; text-decoration: line-through; }
 tr.voided td:last-child, .tx-item.voided .p-actions { text-decoration: none; }
+
+/* ===== Phase 8: stock alerts ===== */
+label .card-hint { font-weight: 400; }
+#view-alerts .cards { margin-bottom: 0; }
+#view-alerts .toolbar { margin-top: 1rem; }
+#alMoves { margin-top: 1.25rem; }
+#alMoves summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+#alMovesBody { margin-top: .6rem; }
+.p-card-mid .card-hint { margin-left: auto; }
+.p-card-top .badge { align-self: flex-start; }
+#alMovesBody .ledger th, #alMovesBody .ledger td { white-space: nowrap; }
+#alMovesBody .ledger td:nth-child(6) { white-space: normal; min-width: 11rem; }

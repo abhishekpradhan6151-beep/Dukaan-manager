@@ -13,6 +13,7 @@
     { id: "dashboard", label: "Dashboard", icon: "⌂" },
     { id: "sale", label: "New Sale", icon: "✚" },
     { id: "products", label: "Products", icon: "▦" },
+    { id: "alerts", label: "Stock Alerts", icon: "⚠" },
     { id: "sales", label: "Sales History", icon: "☰" },
     { id: "customers", label: "Customers & Udhaar", icon: "☺" },
     { id: "expenses", label: "Expenses", icon: "₹" },
@@ -146,15 +147,17 @@
     if (live && live.failed) {
       wrap.append(
         card("Total products", "–", "Storage unavailable", "warn"),
-        card("Low stock", "–", "Storage unavailable", "warn")
+        card("Low stock", "–", "Storage unavailable", "warn"),
+        card("Out of stock", "–", "Storage unavailable", "warn")
       );
     } else if (live) {
       wrap.append(
         card("Total products", String(live.total), "Live: active products on this device"),
-        card("Low stock", String(live.low), "Live: at or below alert level", "warn")
+        card("Low stock", String(live.low), "Live: above 0 but at or below the alert level", "gold"),
+        card("Out of stock", String(live.out), "Live: stock is 0. See Stock Alerts.", "warn")
       );
     } else {
-      wrap.append(card("Total products", "…", "Loading"), card("Low stock", "…", "Loading", "warn"));
+      wrap.append(card("Total products", "…", "Loading"), card("Low stock", "…", "Loading", "gold"), card("Out of stock", "…", "Loading", "warn"));
     }
     const s = salesData();
     if (s.state === "ready") {
